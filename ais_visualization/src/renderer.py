@@ -11,6 +11,7 @@ from pathlib import Path
 from rasterio.transform import from_bounds
 from datashader.transfer_functions import shade
 from datashader.colors import viridis
+from datashader.colors import viridis
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,13 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     Process a single tile: filter, compute, render, and save.
     """
     tms = morecantile.tms.get("WebMercatorQuad")
+    
+    # Check if output already exists
+    zarr_path = zarr_dir / f"tile_{tile.z}_{tile.x}_{tile.y}.zarr"
+    if zarr_path.exists():
+        logger.info(f"Tile {tile} already exists. Skipping.")
+        return
+
     bbox = tms.xy_bounds(tile)
     
     # Filter data for this tile using spatial index
@@ -87,7 +95,11 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     # Use int32
     # Zarr handles compression automatically, but we can specify compressor if needed.
     # Default is usually Blosc/LZ4 which is fast.
-    da.to_zarr(zarr_path, mode="w", consolidated=True)
+    # We explicitly define encoding to avoid compressing spatial_ref which causes int64 issues
+    # We disable compression for spatial_ref, and let the data variable use default (Blosc)
+    encoding = {"spatial_ref": {"compressor": None}}
+    
+    da.to_zarr(zarr_path, mode="w", consolidated=True, encoding=encoding)
     
     # Logging stats
     if isinstance(agg, xr.Dataset):
