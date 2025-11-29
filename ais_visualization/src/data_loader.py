@@ -47,6 +47,18 @@ def load_and_process_data(input_file: Path, partitions: int = None):
         if original_spatial_partitions is not None:
              ddf_geo.spatial_partitions = original_spatial_partitions[:partitions]
 
+    # Check for spatial partitions
+    if ddf_geo.spatial_partitions is None:
+        logger.warning("Spatial partitions not found in metadata. Calculating on the fly (this may take a while)...")
+        ddf_geo = ddf_geo.persist() # Ensure data is in memory
+        ddf_geo.calculate_spatial_partitions()
+        
+        if ddf_geo.spatial_partitions is None:
+             logger.error("Failed to calculate spatial partitions!")
+             # We can still proceed but rendering might fail or be inefficient
+        else:
+             logger.info(f"Calculated {len(ddf_geo.spatial_partitions)} spatial partitions.")
+
     # Ensure CRS is correct (should be EPSG:3857 from preprocessing)
     if ddf_geo.crs != "EPSG:3857":
         logger.warning(f"Unexpected CRS: {ddf_geo.crs}. Expected EPSG:3857.")
