@@ -73,27 +73,36 @@ colormap = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
 
 ### 3. Rendering
 
-Run the visualization pipeline:
+### 3. Rendering (Phase 1: Raw Data)
 
-```bash
-uv run visualize_tracks.py
-```
+Generate raw count data (NetCDF) for the highest zoom level (e.g., Zoom 7). NetCDF is used to support multi-dimensional categorical data.
 
 ```bash
 # Use input file from config.toml
-uv run visualize_tracks.py
+uv run shade_tracks.py
 
 # Override input file via CLI
-uv run visualize_tracks.py --input-file /path/to/other_dataset.parquet
+uv run shade_tracks.py --input-file /path/to/other_dataset.parquet
 
 # Use a shared Dask scheduler (recommended for large datasets)
-uv run visualize_tracks.py --scheduler tcp://127.0.0.1:8786
+uv run shade_tracks.py --scheduler tcp://127.0.0.1:8786
 ```
 
-The script will:
-1.  Load the preprocessed data.
-2.  Generate tiles for the specified bounding box and zoom level.
-3.  Save output to `rendered/run_YYYYMMDD_HHMMSS/`.
+This will output `.nc` files to `rendered/run_YYYYMMDD_HHMMSS/tiff/`.
+
+### 4. Post-Processing (Phase 2: Visualization)
+
+Process the raw NetCDF files to generate seamless, transparent PNGs and lower zoom levels (pyramid).
+
+```bash
+# Run post-processing on a specific run directory
+uv run post_process.py --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
+```
+
+This script will:
+1.  Calculate the **Global Max** density across all tiles to ensure consistent coloring (no seams).
+2.  Render **PNGs** using a custom "Electric Blue" colormap with transparency for low counts.
+3.  Generate **Pyramid** levels (Zoom 0-6) by aggregating the base zoom data.
 
 ## Pipeline Overview
 

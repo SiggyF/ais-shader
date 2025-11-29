@@ -2,7 +2,7 @@
 input_file = "/Users/baart_f/data/ais/AISVesselTracks2024_processed.parquet"
 
 [visualization]
-zoom = 5
+zoom = 7
 tile_size = 1024
 line_width = 0
 category_column = "VesselGroup" # Column to group counts by

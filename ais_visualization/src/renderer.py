@@ -8,6 +8,9 @@ import xarray as xr
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 from pathlib import Path
+from rasterio.transform import from_bounds
+from datashader.transfer_functions import shade
+from datashader.colors import viridis
 
 logger = logging.getLogger(__name__)
 
@@ -71,24 +74,20 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     # Prepare DataArray for saving
     if isinstance(agg, xr.Dataset):
         # Multi-band (Categorical)
-        # Convert to DataArray with 'band' dimension
-        # agg is a Dataset where each variable is a category
-        # We want to stack them into a single DataArray with a 'band' dimension
-        # But rioxarray expects 2D or 3D (band, y, x).
-        # Let's convert the Dataset to a DataArray
         da = agg.to_array(dim="band")
-        # Ensure fill value is 0
         da = da.fillna(0).astype("uint32")
     else:
         # Single band
         da = agg.fillna(0).astype("uint32")
         da = da.expand_dims(dim={'band': 1})
 
+    # Set CRS and Transform
     da.rio.write_crs("EPSG:3857", inplace=True)
     da.rio.write_transform(transform, inplace=True)
     
-    tiff_path = tiff_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.tif"
-    da.rio.to_raster(tiff_path, tiled=True, compress="DEFLATE")
+    # Save as NetCDF (supports N-dims better than TIFF for intermediate)
+    nc_path = tiff_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.nc"
+    da.to_netcdf(nc_path)
     
     # Logging stats
     if isinstance(agg, xr.Dataset):
@@ -101,32 +100,11 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
         agg_max = float(agg.max())
         logger.info(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
 
-    # --- Save PNG (Visualization) ---
-    # For PNG, we want a single image. If categorical, we can colorize by category.
-    # But user wants "Electric Blue" palette.
-    # If categorical, we should probably sum them up for the visual map?
-    # Or use the categorical colormap?
-    # The config has a single colormap list.
-    # Let's sum them up for the PNG to keep the "Electric Blue" density map look.
+    logger.info(f"Saved NetCDF for tile {tile}")
     
-    if isinstance(agg, xr.Dataset):
-        # Sum all categories to get total density for visualization
-        agg_visual = agg.to_array().sum(dim="variable")
-    else:
-        agg_visual = agg
 
-    # Shade
-    img = tf.shade(agg_visual, cmap=config["style"]["colormap"], min_alpha=0)
-    
-    # Save PNG
-    png_path = png_dir / str(tile.z) / str(tile.x) / f"{tile.y}.png"
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Export image
-    with open(png_path, "wb") as f:
-        f.write(img.to_bytes())
-        
-    logger.info(f"Saved PNG and TIFF for tile {tile}")
+
+    logger.info(f"Saved TIFF for tile {tile}")
 
 
 def render_tiles(coords_ddf, output_dir: Path, config: dict):
