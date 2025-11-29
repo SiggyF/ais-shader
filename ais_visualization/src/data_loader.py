@@ -31,52 +31,28 @@ def get_coords(df):
 
 def load_and_process_data(input_file: Path, partitions: int = None):
     """
-    Load AIS data, convert to geometry, reproject, and extract coordinates.
-    Returns a persisted Dask DataFrame with 'x' and 'y' columns.
+    Load preprocessed AIS data (already has geometry and spatial partitions).
     """
-    logger.info(f"Loading data from {input_file}...")
+    logger.info(f"Loading preprocessed data from {input_file}...")
 
-    # Read as standard dask dataframe
-    ddf = dd.read_parquet(input_file, engine="pyarrow")
+    # Read dask_geopandas object directly
+    ddf_geo = dask_geopandas.read_parquet(input_file)
     
     # Subset partitions if requested
     if partitions is not None:
         logger.info(f"Using first {partitions} partitions...")
-        ddf = ddf.partitions[:partitions]
+        # Slicing drops spatial_partitions, so we need to preserve them
+        original_spatial_partitions = ddf_geo.spatial_partitions
+        ddf_geo = ddf_geo.partitions[:partitions]
+        if original_spatial_partitions is not None:
+             ddf_geo.spatial_partitions = original_spatial_partitions[:partitions]
 
-    logger.info("Data loaded (lazy). Converting WKB to Geometry...")
-
-    # Construct meta
-    meta_gdf = gpd.GeoDataFrame(
-        geometry=gpd.GeoSeries([], dtype="object"), crs="EPSG:4269"
-    )
-
-    # Map partitions
-    ddf_geo = ddf.map_partitions(convert_to_gdf, meta=meta_gdf)
-
-    # Convert to dask_geopandas object
-    ddf_geo = dask_geopandas.from_dask_dataframe(ddf_geo, geometry="geometry")
-
-    # Force CRS if needed
-    if not hasattr(ddf_geo, "crs") or ddf_geo.crs is None:
-        logger.info("Setting CRS manually to EPSG:4269...")
-        ddf_geo.crs = "EPSG:4269"
-
-    logger.info(f"Current CRS: {ddf_geo.crs}")
-
-    # Reproject to Web Mercator (EPSG:3857)
+    # Ensure CRS is correct (should be EPSG:3857 from preprocessing)
     if ddf_geo.crs != "EPSG:3857":
-        logger.info("Reprojecting to EPSG:3857...")
-        ddf_geo = ddf_geo.to_crs("EPSG:3857")
-
-    # Extract coordinates to standard dask dataframe (x, y)
-    logger.info("Extracting coordinates for visualization...")
+        logger.warning(f"Unexpected CRS: {ddf_geo.crs}. Expected EPSG:3857.")
     
-    meta_coords = pd.DataFrame({'x': [0.0], 'y': [0.0]})
-    coords_ddf = ddf_geo.map_partitions(get_coords, meta=meta_coords)
+    # Persist
+    logger.info("Persisting GeoDataFrame in memory...")
+    ddf_geo = ddf_geo.persist()
     
-    # Persist coordinates
-    logger.info("Persisting coordinates in memory...")
-    coords_ddf = coords_ddf.persist()
-    
-    return coords_ddf
+    return ddf_geo

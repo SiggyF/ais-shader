@@ -52,6 +52,7 @@ def render_tiles(coords_ddf, output_dir: Path, zoom: int = 5):
         
         # Define canvas for this tile
         tile_size = 1024
+        # We use line rendering which supports Anti-Aliasing via line_width
         cvs = ds.Canvas(
             plot_width=tile_size, 
             plot_height=tile_size,
@@ -59,8 +60,13 @@ def render_tiles(coords_ddf, output_dir: Path, zoom: int = 5):
             y_range=(bbox.bottom, bbox.top)
         )
         
-        # Aggregate
-        agg = cvs.points(coords_ddf, 'x', 'y')
+        # Aggregate using lines
+        # line_width=1 enables anti-aliasing in Datashader
+        try:
+            agg = cvs.line(coords_ddf, geometry='geometry', line_width=1)
+        except ValueError as e:
+            logger.warning(f"Rendering failed for tile {tile} (likely empty): {e}")
+            continue
         
         # Check if empty
         if agg.sum() == 0:

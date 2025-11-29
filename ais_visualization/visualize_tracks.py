@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--input-file",
     type=click.Path(exists=True, path_type=Path),
-    default=Path("/Users/baart_f/data/ais/AISVesselTracks2023.parquet"),
-    help="Path to the input Parquet file.",
+    default=Path("/Users/baart_f/data/ais/AISVesselTracks2023_processed.parquet"),
+    help="Path to the input Parquet file (preprocessed).",
 )
 @click.option(
     "--output-dir",
