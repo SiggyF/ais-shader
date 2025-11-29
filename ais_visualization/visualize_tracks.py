@@ -38,7 +38,13 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786). If None, starts a local cluster.",
 )
-def main(config_file: Path, output_dir: Path, scheduler: str): # Modified function signature
+@click.option(
+    "--input-file",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to input Parquet file (overrides config.toml).",
+)
+def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
     """
     Visualize AIS vessel tracks using Datashader and Dask.
     """
@@ -48,8 +54,12 @@ def main(config_file: Path, output_dir: Path, scheduler: str): # Modified functi
         
     logger.info(f"Loaded configuration from {config_file}")
     
-    # Get input file from config (CLI override could be added but keeping it simple)
-    input_file = Path(config["data"]["input_file"])
+    # Get input file from CLI or config
+    if input_file:
+        logger.info(f"Using input file from CLI: {input_file}")
+    else:
+        input_file = Path(config["data"]["input_file"])
+        logger.info(f"Using input file from config: {input_file}")
 
     if scheduler:
         logger.info(f"Connecting to Dask scheduler at {scheduler}...")
@@ -61,10 +71,23 @@ def main(config_file: Path, output_dir: Path, scheduler: str): # Modified functi
     logger.info(f"Dask Dashboard link: {client.dashboard_link}")
 
     # Create run directory with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # Changed to datetime.now()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = output_dir / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output will be saved to: {run_dir}")
+
+    # Save metadata
+    import json
+    metadata = {
+        "timestamp": timestamp,
+        "input_file": str(input_file),
+        "config": config,
+        "scheduler": scheduler,
+        "command": " ".join(sys.argv)
+    }
+    with open(run_dir / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+    logger.info("Saved metadata.json")
 
     try:
         # Load Data

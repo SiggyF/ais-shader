@@ -79,7 +79,21 @@ Run the visualization pipeline:
 uv run visualize_tracks.py
 ```
 
-Output will be saved to `rendered/run_YYYYMMDD_HHMMSS/`.
+```bash
+# Use input file from config.toml
+uv run visualize_tracks.py
+
+# Override input file via CLI
+uv run visualize_tracks.py --input-file /path/to/other_dataset.parquet
+
+# Use a shared Dask scheduler (recommended for large datasets)
+uv run visualize_tracks.py --scheduler tcp://127.0.0.1:8786
+```
+
+The script will:
+1.  Load the preprocessed data.
+2.  Generate tiles for the specified bounding box and zoom level.
+3.  Save output to `rendered/run_YYYYMMDD_HHMMSS/`.
 
 ## Pipeline Overview
 

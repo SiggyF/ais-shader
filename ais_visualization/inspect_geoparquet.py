@@ -32,10 +32,11 @@ def inspect_file(path):
         logger.info("Attempting gpd.read_parquet...")
         gdf = gpd.read_parquet(path)
         logger.info(f"Success! CRS: {gdf.crs}")
+        logger.info(f"Columns: {gdf.columns.tolist()}")
         logger.info(gdf.head())
         
     except Exception as e:
         logger.error(f"Error: {e}")
 
 if __name__ == "__main__":
-    inspect_file("/Users/baart_f/data/ais/AISVesselTracks2023_processed.parquet/part.0.parquet")
+    inspect_file("/Users/baart_f/data/ais/AISVesselTracks2024_processed.parquet/part.0.parquet")

@@ -41,15 +41,21 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
         y_range=(bbox.bottom, bbox.top)
     )
 
-    # Aggregate using lines
+    # Aggregate
     line_width = config["visualization"]["line_width"]
+    category_column = config["visualization"].get("category_column")
+    
     try:
-        # If line_width > 0, we get AA (coverage). If 0, we get counts (if we specify count).
-        # To ensure we get counts (or accumulated density), we should specify aggregation.
-        # However, AA lines in Datashader 0.14+ might behave differently.
-        # For now, let's use default for AA (which seems to be coverage 0-1) 
-        # and explicit count for aliased.
-        if line_width == 0:
+        if category_column:
+            # Categorical aggregation (count per category)
+            # Ensure column is categorical for Datashader
+            if category_column in gdf_local.columns:
+                gdf_local[category_column] = gdf_local[category_column].astype("category")
+                agg = cvs.line(gdf_local, geometry='geometry', agg=ds.by(category_column, ds.count()))
+            else:
+                logger.warning(f"Category column '{category_column}' not found. Falling back to simple count.")
+                agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
+        elif line_width == 0:
             agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
         else:
             agg = cvs.line(gdf_local, geometry='geometry', line_width=line_width)
@@ -57,51 +63,70 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     except ValueError as e:
         logger.warning(f"Rendering failed for tile {tile}: {e}")
         return
+
+    # --- Save GeoTIFF (Counts) ---
+    # Create transform
+    transform = from_bounds(bbox.left, bbox.bottom, bbox.right, bbox.top, tile_size, tile_size)
     
-    # Check if empty (double check after rendering)
-    agg_sum = agg.sum().item()
-    agg_max = agg.max().item()
-    if agg_sum == 0:
-        logger.info(f"Tile {tile} is empty (after render). Skipping.")
-        return
+    # Prepare DataArray for saving
+    if isinstance(agg, xr.Dataset):
+        # Multi-band (Categorical)
+        # Convert to DataArray with 'band' dimension
+        # agg is a Dataset where each variable is a category
+        # We want to stack them into a single DataArray with a 'band' dimension
+        # But rioxarray expects 2D or 3D (band, y, x).
+        # Let's convert the Dataset to a DataArray
+        da = agg.to_array(dim="band")
+        # Ensure fill value is 0
+        da = da.fillna(0).astype("uint32")
+    else:
+        # Single band
+        da = agg.fillna(0).astype("uint32")
+        da = da.expand_dims(dim={'band': 1})
+
+    da.rio.write_crs("EPSG:3857", inplace=True)
+    da.rio.write_transform(transform, inplace=True)
     
-    logger.info(f"Tile {tile} stats: sum={agg_sum:.2f}, max={agg_max:.2f}")
-        
+    tiff_path = tiff_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.tif"
+    da.rio.to_raster(tiff_path, tiled=True, compress="DEFLATE")
+    
+    # Logging stats
+    if isinstance(agg, xr.Dataset):
+        # Sum across all categories
+        total_sum = float(da.sum())
+        max_val = float(da.max())
+        logger.info(f"Tile {tile} stats: sum={total_sum}, max={max_val}, categories={len(agg.data_vars)}")
+    else:
+        agg_sum = float(agg.sum())
+        agg_max = float(agg.max())
+        logger.info(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
+
+    # --- Save PNG (Visualization) ---
+    # For PNG, we want a single image. If categorical, we can colorize by category.
+    # But user wants "Electric Blue" palette.
+    # If categorical, we should probably sum them up for the visual map?
+    # Or use the categorical colormap?
+    # The config has a single colormap list.
+    # Let's sum them up for the PNG to keep the "Electric Blue" density map look.
+    
+    if isinstance(agg, xr.Dataset):
+        # Sum all categories to get total density for visualization
+        agg_visual = agg.to_array().sum(dim="variable")
+    else:
+        agg_visual = agg
+
     # Shade
-    cmap = config["style"]["colormap"]
-    img = tf.shade(agg, cmap=cmap, how='log', min_alpha=0)
+    img = tf.shade(agg_visual, cmap=config["style"]["colormap"], min_alpha=0)
     
     # Save PNG
-    tile_png_dir = png_dir / str(tile.z) / str(tile.x)
-    tile_png_dir.mkdir(parents=True, exist_ok=True)
-    export_image(img, str(tile.y), export_path=str(tile_png_dir), background=None)
+    png_path = png_dir / str(tile.z) / str(tile.x) / f"{tile.y}.png"
+    png_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Save COG
-    tile_name = f"tile_{tile.z}_{tile.x}_{tile.y}"
-    tif_path = tiff_dir / f"{tile_name}.tif"
-    cog_path = tiff_dir / f"{tile_name}_cog.tif"
-    
-    # Set geospatial info
-    agg.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-    agg.rio.write_crs("EPSG:3857", inplace=True)
-    
-    # Write temp GeoTIFF
-    agg.rio.to_raster(tif_path)
-    
-    # Convert to COG
-    dst_profile = cog_profiles.get("deflate")
-    cog_translate(
-        str(tif_path),
-        str(cog_path),
-        dst_profile,
-        in_memory=True,
-        quiet=True
-    )
-    
-    # Clean up
-    tif_path.unlink()
-    
-    logger.info(f"Saved PNG and COG for tile {tile}")
+    # Export image
+    with open(png_path, "wb") as f:
+        f.write(img.to_bytes())
+        
+    logger.info(f"Saved PNG and TIFF for tile {tile}")
 
 
 def render_tiles(coords_ddf, output_dir: Path, config: dict):

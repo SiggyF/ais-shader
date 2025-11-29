@@ -5,6 +5,7 @@ input_file = "/Users/baart_f/data/ais/AISVesselTracks2024_processed.parquet"
 zoom = 5
 tile_size = 1024
 line_width = 0
+category_column = "VesselGroup" # Column to group counts by
 # US Bounding Box (EPSG:4326): MinX, MinY, MaxX, MaxY
 bbox = [-125.0, 24.0, -66.0, 49.0]
 
