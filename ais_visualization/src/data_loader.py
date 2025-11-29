@@ -50,7 +50,7 @@ def load_and_process_data(input_file: Path, partitions: int = None):
     # Check for spatial partitions
     if ddf_geo.spatial_partitions is None:
         logger.warning("Spatial partitions not found in metadata. Calculating on the fly (this may take a while)...")
-        ddf_geo = ddf_geo.persist() # Ensure data is in memory
+        # ddf_geo = ddf_geo.persist() # Ensure data is in memory
         ddf_geo.calculate_spatial_partitions()
         
         if ddf_geo.spatial_partitions is None:
@@ -64,7 +64,7 @@ def load_and_process_data(input_file: Path, partitions: int = None):
         logger.warning(f"Unexpected CRS: {ddf_geo.crs}. Expected EPSG:3857.")
     
     # Persist
-    logger.info("Persisting GeoDataFrame in memory...")
-    ddf_geo = ddf_geo.persist()
+    # logger.info("Persisting GeoDataFrame in memory...")
+    # ddf_geo = ddf_geo.persist()
     
     return ddf_geo

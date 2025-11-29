@@ -44,24 +44,19 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     line_width = config["visualization"]["line_width"]
     category_column = config["visualization"].get("category_column")
     
-    try:
-        if category_column:
-            # Categorical aggregation (count per category)
-            # Ensure column is categorical for Datashader
-            if category_column in gdf_local.columns:
-                gdf_local[category_column] = gdf_local[category_column].astype("category")
-                agg = cvs.line(gdf_local, geometry='geometry', agg=ds.by(category_column, ds.count()))
-            else:
-                logger.warning(f"Category column '{category_column}' not found. Falling back to simple count.")
-                agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
-        elif line_width == 0:
-            agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
+    if category_column:
+        # Categorical aggregation (count per category)
+        # Ensure column is categorical for Datashader
+        if category_column in gdf_local.columns:
+            gdf_local[category_column] = gdf_local[category_column].astype("category")
+            agg = cvs.line(gdf_local, geometry='geometry', agg=ds.by(category_column, ds.count()))
         else:
-            agg = cvs.line(gdf_local, geometry='geometry', line_width=line_width)
-            
-    except ValueError as e:
-        logger.warning(f"Rendering failed for tile {tile}: {e}")
-        return
+            logger.warning(f"Category column '{category_column}' not found. Falling back to simple count.")
+            agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
+    elif line_width == 0:
+        agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
+    else:
+        agg = cvs.line(gdf_local, geometry='geometry', line_width=line_width)
 
     # --- Save GeoTIFF (Counts) ---
     # Create transform
@@ -109,7 +104,7 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     
 
 
-    logger.info(f"Saved TIFF for tile {tile}")
+
 
 
 def render_tiles(coords_ddf, output_dir: Path, config: dict):

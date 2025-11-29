@@ -1,4 +1,3 @@
-```python
 import logging
 import sys
 import time
@@ -106,8 +105,10 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         logger.info("Done!")
         
     except Exception as e:
-        logger.error(f"An error occurred: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1).close()
     finally:
         client.close()
 
