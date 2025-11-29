@@ -70,10 +70,12 @@ The code is modularized in `src/`:
 ## Output Structure
 ```
 rendered/run_20251129_192452/
-├── png/
-│   └── 5/
-│       ├── x/
-│       │   └── y.png
-└── tiff/
-    ├── tile_5_x_y_cog.tif
+    ├── nc/
+    │   └── tile_z_x_y_counts.nc
+    ├── png/
+    │   └── z/
+    │       └── x/
+    │           └── y.png
+    └── tiff/
+        └── tile_z_x_y_cog.tif
 ```
