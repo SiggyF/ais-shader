@@ -86,7 +86,7 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     da.rio.write_transform(transform, inplace=True)
     
     # Save as NetCDF (supports N-dims better than TIFF for intermediate)
-    nc_path = tiff_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.nc"
+    nc_path = nc_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.nc"
     da.to_netcdf(nc_path)
     
     # Logging stats
@@ -121,13 +121,24 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
     logger.info(f"Generating tiles for BBox {us_bbox} at Zoom {zoom}...")
     
     tiles = list(tms.tiles(*us_bbox, zooms=[zoom]))
-    logger.info(f"Found {len(tiles)} tiles to render.")
     
     # Create subdirectories
-    png_dir = output_dir / "png"
     tiff_dir = output_dir / "tiff"
     tiff_dir.mkdir(parents=True, exist_ok=True)
     
-    for tile in tiles:
+    nc_dir = output_dir / "nc"
+    nc_dir.mkdir(parents=True, exist_ok=True)
+    
+    png_dir = output_dir / "png"
+    png_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Process tiles
+    # We can parallelize this, but Dask is already parallelizing the aggregation.
+    # So we iterate and compute.
+    
+    total_tiles = len(tiles)
+    logger.info(f"Found {total_tiles} tiles to render.")
+    
+    for i, tile in enumerate(tiles):
         logger.info(f"Processing Tile: {tile}...")
-        process_single_tile(tile, coords_ddf, png_dir, tiff_dir, config)
+        process_single_tile(tile, coords_ddf, png_dir, nc_dir, config)

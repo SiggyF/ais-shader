@@ -45,74 +45,97 @@ def render_tile(nc_path, output_path, cmap, global_max, log_scale=True):
     """
     Render a single NetCDF to PNG using global scaling and custom colormap.
     """
-    try:
-        # Open NetCDF
-        da = xr.open_dataarray(nc_path)
+    # Open NetCDF
+    # Use open_dataset because open_dataarray fails with multiple vars (spatial_ref)
+    with xr.open_dataset(nc_path) as ds:
+        # The variable name is likely __xarray_dataarray_variable__ or similar
+        # We can find the data variable by checking data_vars
+        var_name = list(ds.data_vars)[0]
+        if "__xarray_dataarray_variable__" in ds.data_vars:
+            var_name = "__xarray_dataarray_variable__"
         
-        # Sum bands if multi-band (for visualization)
-        if da.shape[0] > 1:
-            data = da.sum(dim="band").values
+        da = ds[var_name]
+        
+        # Sum over extra dimensions to get 2D (y, x) for visualization
+        # Dims might be (band, y, x, VesselGroup) or similar
+        dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
+        
+        if dims_to_sum:
+            data = da.sum(dim=dims_to_sum).values
         else:
-            data = da.values[0]
-            
-        # Normalize
-        if log_scale:
-            # Log scale: log(1 + x) / log(1 + max)
-            norm_data = np.log1p(data) / np.log1p(global_max)
-        else:
-            norm_data = data / global_max
-            
-        # Clip to 0-1
-        norm_data = np.clip(norm_data, 0, 1)
+            data = da.values
         
-        # Apply colormap
-        # cmap expects 0-1 input and returns RGBA (0-1)
-        rgba = cmap(norm_data)
+    # Normalize
+    if log_scale:
+        # Log scale: log(1 + x) / log(1 + max)
+        norm_data = np.log1p(data) / np.log1p(global_max)
+    else:
+        norm_data = data / global_max
         
-        # Convert to 0-255 uint8
-        img_data = (rgba * 255).astype(np.uint8)
-        
-        # Save as PNG
-        img = Image.fromarray(img_data, "RGBA")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(output_path)
-        
-    except Exception as e:
-        logger.error(f"Failed to render {nc_path}: {e}")
+    # Clip to 0-1
+    norm_data = np.clip(norm_data, 0, 1)
+    
+    # Apply colormap
+    # cmap expects 0-1 input and returns RGBA (0-1)
+    rgba = cmap(norm_data)
+    
+    # Convert to 0-255 uint8
+    img_data = (rgba * 255).astype(np.uint8)
+    
+    # Save as PNG
+    img = Image.fromarray(img_data, "RGBA")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path)
 
 def process_zoom_level(run_dir, zoom, cmap, global_max):
     """
     Process all NetCDFs for a specific zoom level.
     """
-    tiff_dir = run_dir / "tiff"
+    nc_dir = run_dir / "nc"
     png_dir = run_dir / "png"
     
     # Find all NetCDFs for this zoom
-    ncs = list(tiff_dir.glob(f"tile_{zoom}_*_counts.nc"))
+    ncs = list(nc_dir.glob(f"tile_{zoom}_*_counts.nc"))
     logger.info(f"Found {len(ncs)} tiles for Zoom {zoom}")
     
     if not ncs:
         return
 
-    # Render in parallel
-    with ProcessPoolExecutor() as executor:
+    if not ncs:
+        return
+
+    # Render in parallel using Dask
+    from dask.distributed import get_client, as_completed
+    try:
+        client = get_client()
+        logger.info(f"Using Dask client: {client}")
+    except ValueError:
+        logger.warning("No Dask client found. Falling back to serial execution.")
+        client = None
+
+    if client:
         futures = []
         for nc in ncs:
-            # Parse x, y from filename: tile_z_x_y_counts.nc
             parts = nc.name.split("_")
             x, y = parts[2], parts[3]
             png_path = png_dir / str(zoom) / x / f"{y}.png"
-            
-            futures.append(executor.submit(render_tile, nc, png_path, cmap, global_max))
-            
-        for _ in tqdm(futures, desc=f"Rendering Zoom {zoom}"):
-            _.result()
+            futures.append(client.submit(render_tile, nc, png_path, cmap, global_max))
+        
+        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Rendering Zoom {zoom}"):
+            pass
+    else:
+        # Serial fallback (or ProcessPoolExecutor if we wanted, but let's stick to Dask or Serial)
+        for nc in tqdm(ncs, desc=f"Rendering Zoom {zoom}"):
+            parts = nc.name.split("_")
+            x, y = parts[2], parts[3]
+            png_path = png_dir / str(zoom) / x / f"{y}.png"
+            render_tile(nc, png_path, cmap, global_max)
 
 def generate_pyramid(run_dir, base_zoom, cmap, global_max):
     """
     Generate lower zoom levels by aggregating upper levels.
     """
-    tiff_dir = run_dir / "tiff"
+    nc_dir = run_dir / "nc"
     
     # Iterate from base_zoom - 1 down to 0
     for z in range(base_zoom - 1, -1, -1):
@@ -120,7 +143,7 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
         
         # We need to know which tiles to generate.
         # We can scan the z+1 directory to find existing children.
-        child_ncs = list(tiff_dir.glob(f"tile_{z+1}_*_counts.nc"))
+        child_ncs = list(nc_dir.glob(f"tile_{z+1}_*_counts.nc"))
         
         # Group children by parent (z, x, y)
         # Parent of (z+1, x, y) is (z, x//2, y//2)
@@ -136,18 +159,77 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
             
         # Process each parent
         for (z, px, py), children in tqdm(parents.items(), desc=f"Zoom {z}"):
-            # Initialize parent array (bands, height, width)
-            # We need to know number of bands from first child
-            with xr.open_dataarray(children[0]) as src:
-                n_bands = src.shape[0] if len(src.shape) > 2 else 1
-                dtype = src.dtype
-                # crs = src.rio.crs # NetCDF might not have rio accessor ready without decode_coords="all"
-                
-            # Create empty parent
-            tile_size = 1024
-            parent_data = np.zeros((n_bands, tile_size, tile_size), dtype=dtype)
+            # We need to handle inconsistent categories (variables) across children.
+            # 1. Read all children to find union of categories
+            child_ds_list = []
+            all_categories = set()
             
             for child_path in children:
+                try:
+                    ds = xr.open_dataset(child_path)
+                    # Identify the data variable
+                    var_name = list(ds.data_vars)[0]
+                    if "__xarray_dataarray_variable__" in ds.data_vars:
+                        var_name = "__xarray_dataarray_variable__"
+                    
+                    da = ds[var_name]
+                    child_ds_list.append((child_path, da))
+                    
+                    # Check categories (last dim usually)
+                    # Dims: (band, y, x, VesselGroup)
+                    # We assume the last dim is the category dim if it's not spatial/band
+                    # Or we can just look at the coords of the last dim
+                    non_spatial_dims = [d for d in da.dims if d not in ('y', 'x', 'band')]
+                    if non_spatial_dims:
+                        cat_dim = non_spatial_dims[0]
+                        cats = da.coords[cat_dim].values
+                        all_categories.update(cats)
+                except Exception as e:
+                    logger.warning(f"Failed to read {child_path}: {e}")
+            
+            if not child_ds_list:
+                continue
+
+            # Sort categories for consistency
+            sorted_categories = sorted(list(all_categories))
+            
+            # 2. Create Parent DataArray
+            # Shape: (band, y, x, categories)
+            # We assume band=1 for now as per previous logic, or take max bands
+            n_bands = 1
+            tile_size = 1024
+            
+            # We need to construct the shape dynamically
+            # (band, y, x, cat_dim)
+            # But we need to know the order.
+            # Let's use the first child as a template for dim order, but replace sizes
+            template_da = child_ds_list[0][1]
+            parent_dims = list(template_da.dims)
+            parent_coords = dict(template_da.coords)
+            
+            # Update category coord
+            if non_spatial_dims:
+                cat_dim = non_spatial_dims[0]
+                parent_coords[cat_dim] = sorted_categories
+                
+                # Update shape
+                parent_shape = []
+                for d in parent_dims:
+                    if d == 'y': parent_shape.append(tile_size)
+                    elif d == 'x': parent_shape.append(tile_size)
+                    elif d == cat_dim: parent_shape.append(len(sorted_categories))
+                    else: parent_shape.append(template_da.sizes[d])
+            else:
+                # No categories (just band, y, x)
+                parent_shape = [template_da.sizes[d] if d not in ('y', 'x') else tile_size for d in parent_dims]
+
+            parent_data = np.zeros(parent_shape, dtype=template_da.dtype)
+            
+            # Create Parent DataArray (empty)
+            da_parent = xr.DataArray(parent_data, dims=parent_dims, coords=parent_coords)
+            
+            # 3. Fill Parent
+            for child_path, da_child in child_ds_list:
                 parts = child_path.name.split("_")
                 cx, cy = int(parts[2]), int(parts[3])
                 
@@ -155,30 +237,52 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
                 is_right = cx % 2
                 is_bottom = cy % 2
                 
-                # Target slice in parent
-                half_size = tile_size // 2
-                x_start = is_right * half_size
-                x_end = x_start + half_size
-                y_start = is_bottom * half_size
-                y_end = y_start + half_size
+                # Target slice
+                y_slice = slice(is_bottom * 512, (is_bottom + 1) * 512)
+                x_slice = slice(is_right * 512, (is_right + 1) * 512)
                 
-                with xr.open_dataarray(child_path) as child:
-                    # Coarsen
-                    # child is (band, y, x)
-                    coarsened = child.coarsen(y=2, x=2, boundary="trim").sum()
-                    
-                    # Place in parent
-                    parent_data[:, y_start:y_end, x_start:x_end] = coarsened.values
+                # Reindex child to match parent categories
+                if non_spatial_dims:
+                    cat_dim = non_spatial_dims[0]
+                    # fill_value=0 for missing categories
+                    da_child_aligned = da_child.reindex({cat_dim: sorted_categories}, fill_value=0)
+                else:
+                    da_child_aligned = da_child
+                
+                # Coarsen
+                coarsened = da_child_aligned.coarsen(y=2, x=2, boundary="trim").sum()
+                
+                # Assign to parent
+                # We need to use loc or isel, but since we have slices for y/x...
+                # We can construct a selector
+                selector = {d: slice(None) for d in parent_dims}
+                selector['y'] = y_slice
+                selector['x'] = x_slice
+                
+                # Assign values
+                # Note: da_parent[selector] might not work directly for assignment with complex dims
+                # Using numpy assignment on .values is safer if we match the shape
+                
+                # We need to ensure coarsened has same shape as the target slice
+                # It should, because we reindexed categories.
+                
+                # However, converting to numpy loses dimension order safety.
+                # Let's trust the order is preserved since we used the same dims.
+                
+                # We need to map the selector to numpy slices
+                np_slices = []
+                for d in parent_dims:
+                    if d == 'y': np_slices.append(y_slice)
+                    elif d == 'x': np_slices.append(x_slice)
+                    else: np_slices.append(slice(None))
+                
+                parent_data[tuple(np_slices)] = coarsened.values
+
+            # Update da_parent with filled data
+            da_parent.values = parent_data
             
             # Save Parent NetCDF
-            parent_nc_path = tiff_dir / f"tile_{z}_{px}_{py}_counts.nc"
-            
-            da_parent = xr.DataArray(
-                parent_data,
-                dims=("band", "y", "x"),
-                coords=None
-            )
-            # da_parent.rio.write_crs("EPSG:3857", inplace=True) # Optional for PNG step
+            parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}_counts.nc"
             da_parent.to_netcdf(parent_nc_path)
             
             # Render Parent PNG
@@ -188,26 +292,45 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
 @click.command()
 @click.option("--run-dir", type=click.Path(exists=True, path_type=Path), required=True, help="Path to the run directory.")
 @click.option("--base-zoom", type=int, default=7, help="Base zoom level to render.")
-def main(run_dir, base_zoom):
+@click.option("--scheduler", type=str, default=None, help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786).")
+def main(run_dir, base_zoom, scheduler):
     """
     Post-process NetCDFs to PNGs with global scaling and transparency.
     """
-    tiff_dir = run_dir / "tiff"
+    # Initialize Dask Client
+    from dask.distributed import Client
+    if scheduler:
+        client = Client(scheduler)
+        logger.info(f"Connected to Dask scheduler at {scheduler}")
+    else:
+        client = Client() # Local cluster
+        logger.info(f"Started local Dask cluster: {client.dashboard_link}")
+
+    nc_dir = run_dir / "nc"
     
     # 1. Calculate Global Max
     logger.info("Calculating global max...")
     global_max = 0
-    ncs = list(tiff_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
+    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
     
     for nc in tqdm(ncs, desc="Scanning tiles"):
-        with xr.open_dataarray(nc) as da:
-            # Sum bands if needed
-            if da.shape[0] > 1:
-                val = da.sum(dim="band").max().item()
-            else:
-                val = da.max().item()
-            if val > global_max:
-                global_max = val
+        try:
+            with xr.open_dataset(nc) as ds:
+                var_name = list(ds.data_vars)[0]
+                if "__xarray_dataarray_variable__" in ds.data_vars:
+                    var_name = "__xarray_dataarray_variable__"
+                da = ds[var_name]
+                
+                dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
+                if dims_to_sum:
+                    val = da.sum(dim=dims_to_sum).max().item()
+                else:
+                    val = da.max().item()
+                    
+                if val > global_max:
+                    global_max = val
+        except Exception as e:
+            logger.warning(f"Skipping {nc}: {e}")
                 
     logger.info(f"Global Max: {global_max}")
     
