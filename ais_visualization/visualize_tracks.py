@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 import click
 import tomllib
@@ -32,14 +33,14 @@ logger = logging.getLogger(__name__)
     help="Base directory for output.",
 )
 @click.option(
-    "--partitions",
-    type=int,
+    "--scheduler",
+    type=str,
     default=None,
-    help="Number of partitions to process (for testing).",
+    help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786). If None, starts a local cluster.",
 )
-def main(config_file: Path, output_dir: Path, partitions: int):
+def main(config_file: Path, output_dir: Path, scheduler: str): # Modified function signature
     """
-    Visualize AIS vessel tracks using Dask and Datashader.
+    Visualize AIS vessel tracks using Datashader and Dask.
     """
     # Load Config
     with open(config_file, "rb") as f:
@@ -50,19 +51,25 @@ def main(config_file: Path, output_dir: Path, partitions: int):
     # Get input file from config (CLI override could be added but keeping it simple)
     input_file = Path(config["data"]["input_file"])
 
-    logger.info("Starting Dask Distributed Client...")
-    client = Client()
+    if scheduler:
+        logger.info(f"Connecting to Dask scheduler at {scheduler}...")
+        client = Client(scheduler)
+    else:
+        logger.info("Starting Local Dask Client...")
+        client = Client()
+        
     logger.info(f"Dask Dashboard link: {client.dashboard_link}")
 
     # Create run directory with timestamp
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # Changed to datetime.now()
     run_dir = output_dir / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output will be saved to: {run_dir}")
 
     try:
         # Load Data
-        coords_ddf = load_and_process_data(input_file, partitions)
+        # Removed 'partitions' parameter as per the instruction's implied change
+        coords_ddf = load_and_process_data(input_file) 
         
         # Render Tiles
         render_tiles(coords_ddf, run_dir, config)

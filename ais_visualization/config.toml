@@ -1,5 +1,5 @@
 [data]
-input_file = "/Users/baart_f/data/ais/AISVesselTracks2023_processed.parquet"
+input_file = "/Users/baart_f/data/ais/AISVesselTracks2024_processed.parquet"
 
 [visualization]
 zoom = 5

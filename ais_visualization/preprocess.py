@@ -44,12 +44,23 @@ def convert_to_gdf(df: pd.DataFrame) -> gpd.GeoDataFrame:
     default=None,
     help="Number of partitions to process (for testing).",
 )
-def main(input_file: Path, output_file: Path, partitions: int):
+@click.option(
+    "--scheduler",
+    type=str,
+    default=None,
+    help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786). If None, starts a local cluster.",
+)
+def main(input_file: Path, output_file: Path, partitions: int, scheduler: str):
     """
     Preprocess AIS data: WKB -> Geo -> Reproject -> Spatial Partition -> Save.
     """
-    logger.info("Starting Dask Client...")
-    client = Client()
+    if scheduler:
+        logger.info(f"Connecting to Dask scheduler at {scheduler}...")
+        client = Client(scheduler)
+    else:
+        logger.info("Starting Local Dask Client...")
+        client = Client()
+    
     logger.info(f"Dashboard: {client.dashboard_link}")
 
     logger.info(f"Reading {input_file}...")
@@ -61,9 +72,20 @@ def main(input_file: Path, output_file: Path, partitions: int):
         # Check if it's already GeoParquet
         try:
             logger.info("Attempting to read as GeoParquet...")
-            ddf_geo = dask_geopandas.read_parquet(input_file)
+            # gather_spatial_partitions=False handles cases where metadata might be slightly off (e.g. from ogr2ogr)
+            ddf_geo = dask_geopandas.read_parquet(input_file, gather_spatial_partitions=False)
             if partitions:
                 ddf_geo = ddf_geo.partitions[:partitions]
+            
+            # Drop Shape_bbox if present (causes issues with pyarrow serialization/casting)
+            if "Shape_bbox" in ddf_geo.columns:
+                ddf_geo = ddf_geo.drop(columns=["Shape_bbox"])
+
+            # Rename Shape to geometry if present
+            if "Shape" in ddf_geo.columns:
+                ddf_geo = ddf_geo.rename(columns={"Shape": "geometry"})
+                ddf_geo = ddf_geo.set_geometry("geometry")
+                
             logger.info("Successfully read as GeoParquet.")
         except Exception as e:
             logger.warning(f"Failed to read as GeoParquet: {e}")
