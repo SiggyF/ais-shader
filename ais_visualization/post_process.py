@@ -165,27 +165,24 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
             all_categories = set()
             
             for child_path in children:
-                try:
-                    ds = xr.open_dataset(child_path)
-                    # Identify the data variable
-                    var_name = list(ds.data_vars)[0]
-                    if "__xarray_dataarray_variable__" in ds.data_vars:
-                        var_name = "__xarray_dataarray_variable__"
-                    
-                    da = ds[var_name]
-                    child_ds_list.append((child_path, da))
-                    
-                    # Check categories (last dim usually)
-                    # Dims: (band, y, x, VesselGroup)
-                    # We assume the last dim is the category dim if it's not spatial/band
-                    # Or we can just look at the coords of the last dim
-                    non_spatial_dims = [d for d in da.dims if d not in ('y', 'x', 'band')]
-                    if non_spatial_dims:
-                        cat_dim = non_spatial_dims[0]
-                        cats = da.coords[cat_dim].values
-                        all_categories.update(cats)
-                except Exception as e:
-                    logger.warning(f"Failed to read {child_path}: {e}")
+                ds = xr.open_dataset(child_path)
+                # Identify the data variable
+                var_name = list(ds.data_vars)[0]
+                if "__xarray_dataarray_variable__" in ds.data_vars:
+                    var_name = "__xarray_dataarray_variable__"
+                
+                da = ds[var_name]
+                child_ds_list.append((child_path, da))
+                
+                # Check categories (last dim usually)
+                # Dims: (band, y, x, VesselGroup)
+                # We assume the last dim is the category dim if it's not spatial/band
+                # Or we can just look at the coords of the last dim
+                non_spatial_dims = [d for d in da.dims if d not in ('y', 'x', 'band')]
+                if non_spatial_dims:
+                    cat_dim = non_spatial_dims[0]
+                    cats = da.coords[cat_dim].values
+                    all_categories.update(cats)
             
             if not child_ds_list:
                 continue
@@ -314,23 +311,20 @@ def main(run_dir, base_zoom, scheduler):
     ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
     
     for nc in tqdm(ncs, desc="Scanning tiles"):
-        try:
-            with xr.open_dataset(nc) as ds:
-                var_name = list(ds.data_vars)[0]
-                if "__xarray_dataarray_variable__" in ds.data_vars:
-                    var_name = "__xarray_dataarray_variable__"
-                da = ds[var_name]
+        with xr.open_dataset(nc) as ds:
+            var_name = list(ds.data_vars)[0]
+            if "__xarray_dataarray_variable__" in ds.data_vars:
+                var_name = "__xarray_dataarray_variable__"
+            da = ds[var_name]
+            
+            dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
+            if dims_to_sum:
+                val = da.sum(dim=dims_to_sum).max().item()
+            else:
+                val = da.max().item()
                 
-                dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
-                if dims_to_sum:
-                    val = da.sum(dim=dims_to_sum).max().item()
-                else:
-                    val = da.max().item()
-                    
-                if val > global_max:
-                    global_max = val
-        except Exception as e:
-            logger.warning(f"Skipping {nc}: {e}")
+            if val > global_max:
+                global_max = val
                 
     logger.info(f"Global Max: {global_max}")
     

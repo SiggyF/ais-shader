@@ -25,11 +25,7 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     subset = coords_ddf.cx[bbox.left:bbox.right, bbox.bottom:bbox.top]
     
     # Compute to local GeoDataFrame
-    try:
-        gdf_local = subset.compute()
-    except Exception as e:
-        logger.warning(f"Failed to compute subset for {tile}: {e}")
-        return
+    gdf_local = subset.compute()
 
     if len(gdf_local) == 0:
         logger.info(f"Tile {tile} is empty. Skipping.")
