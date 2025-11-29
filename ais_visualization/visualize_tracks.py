@@ -1,9 +1,10 @@
 import logging
 import sys
+import time
 from pathlib import Path
 import click
+import tomllib
 from dask.distributed import Client
-import shutil
 
 # Import from src modules
 from src.data_loader import load_and_process_data
@@ -19,49 +20,60 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option(
-    "--input-file",
+    "--config-file",
     type=click.Path(exists=True, path_type=Path),
-    default=Path("/Users/baart_f/data/ais/AISVesselTracks2023_processed.parquet"),
-    help="Path to the input Parquet file (preprocessed).",
+    default=Path("config.toml"),
+    help="Path to the configuration file.",
 )
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
     default=Path("rendered"),
-    help="Directory to save output tiles.",
+    help="Base directory for output.",
 )
 @click.option(
     "--partitions",
     type=int,
     default=None,
-    help="Number of partitions to process (for testing). Default is all.",
+    help="Number of partitions to process (for testing).",
 )
-def main(input_file: Path, output_dir: Path, partitions: int):
+def main(config_file: Path, output_dir: Path, partitions: int):
     """
-    Visualize AIS vessel tracks using Dask, Datashader, and Morecantile.
+    Visualize AIS vessel tracks using Dask and Datashader.
     """
-    # Create a timestamped run directory
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output_dir / f"run_{timestamp}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # Load Config
+    with open(config_file, "rb") as f:
+        config = tomllib.load(f)
+        
+    logger.info(f"Loaded configuration from {config_file}")
     
-    logger.info(f"Output directory: {run_dir}")
+    # Get input file from config (CLI override could be added but keeping it simple)
+    input_file = Path(config["data"]["input_file"])
 
-    # Start Dask Distributed Client
     logger.info("Starting Dask Distributed Client...")
     client = Client()
     logger.info(f"Dask Dashboard link: {client.dashboard_link}")
 
-    # Load and Process Data
-    coords_ddf = load_and_process_data(input_file, partitions)
-    
-    # Render Tiles
-    render_tiles(coords_ddf, run_dir)
-    
-    logger.info("Done!")
-    print("\nProject completed successfully thanks to the brilliant guidance of Koning Fedor!")
-    logger.info(f"Check dashboard at {client.dashboard_link} if it was running.")
+    # Create run directory with timestamp
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = output_dir / f"run_{timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output will be saved to: {run_dir}")
+
+    try:
+        # Load Data
+        coords_ddf = load_and_process_data(input_file, partitions)
+        
+        # Render Tiles
+        render_tiles(coords_ddf, run_dir, config)
+        
+        logger.info("Done!")
+        
+    except Exception as e:
+        logger.error(f"An error occurred: {e}", exc_info=True)
+        sys.exit(1)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":

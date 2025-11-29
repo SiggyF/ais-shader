@@ -53,17 +53,32 @@ def main(input_file: Path, output_file: Path, partitions: int):
     logger.info(f"Dashboard: {client.dashboard_link}")
 
     logger.info(f"Reading {input_file}...")
-    ddf = dd.read_parquet(input_file, engine="pyarrow")
     
-    if partitions:
-        logger.info(f"Using first {partitions} partitions...")
-        ddf = ddf.partitions[:partitions]
+    if input_file.suffix == ".gpkg":
+        logger.info("Detected GPKG format. Reading with dask_geopandas...")
+        ddf_geo = dask_geopandas.read_file(input_file, npartitions=partitions if partitions else 4)
+    else:
+        # Check if it's already GeoParquet
+        try:
+            logger.info("Attempting to read as GeoParquet...")
+            ddf_geo = dask_geopandas.read_parquet(input_file)
+            if partitions:
+                ddf_geo = ddf_geo.partitions[:partitions]
+            logger.info("Successfully read as GeoParquet.")
+        except Exception:
+            logger.info("Not GeoParquet or read failed. Falling back to WKB conversion...")
+            # Assume WKB Parquet
+            ddf = dd.read_parquet(input_file, engine="pyarrow")
+            
+            if partitions:
+                logger.info(f"Using first {partitions} partitions...")
+                ddf = ddf.partitions[:partitions]
 
-    # Convert to GeoDataFrame
-    logger.info("Converting to GeoDataFrame...")
-    meta_gdf = gpd.GeoDataFrame(geometry=gpd.GeoSeries([], dtype="object"), crs="EPSG:4269")
-    ddf_geo = ddf.map_partitions(convert_to_gdf, meta=meta_gdf)
-    ddf_geo = dask_geopandas.from_dask_dataframe(ddf_geo, geometry="geometry")
+            # Convert to GeoDataFrame
+            logger.info("Converting to GeoDataFrame...")
+            meta_gdf = gpd.GeoDataFrame(geometry=gpd.GeoSeries([], dtype="object"), crs="EPSG:4269")
+            ddf_geo = ddf.map_partitions(convert_to_gdf, meta=meta_gdf)
+            ddf_geo = dask_geopandas.from_dask_dataframe(ddf_geo, geometry="geometry")
 
     # Reproject
     logger.info("Reprojecting to EPSG:3857...")
