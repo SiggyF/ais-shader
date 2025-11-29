@@ -255,40 +255,7 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
     png_path = run_dir / "png" / str(z) / str(px) / f"{py}.png"
     render_tile(parent_nc_path, png_path, cmap, global_max)
 
-def generate_pyramid(run_dir, base_zoom, cmap, global_max, client=None):
-    """
-    Generate lower zoom levels by aggregating upper levels.
-    """
-    nc_dir = run_dir / "nc"
-    
-    # Iterate from base_zoom - 1 down to 0 (must be sequential)
-    for z in range(base_zoom - 1, -1, -1):
-        logger.info(f"Generating Zoom {z}...")
-        
-        child_ncs = list(nc_dir.glob(f"tile_{z+1}_*_counts.nc"))
-        
-        parents = {}
-        for child in child_ncs:
-            parts = child.name.split("_")
-            cx, cy = int(parts[2]), int(parts[3])
-            px, py = cx // 2, cy // 2
-            parent_key = (z, px, py)
-            if parent_key not in parents:
-                parents[parent_key] = []
-            parents[parent_key].append(child)
-            
-        # Process parents in parallel if client is available
-        if client:
-            from dask.distributed import as_completed
-            futures = []
-            for parent_key, children in parents.items():
-                futures.append(client.submit(process_parent_tile, parent_key, children, nc_dir, run_dir, cmap, global_max))
-            
-            for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Zoom {z}"):
-                pass
-        else:
-            for parent_key, children in tqdm(parents.items(), desc=f"Zoom {z}"):
-                process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
+
 
 def export_single_cog(nc_path, tiff_dir):
     """
@@ -331,25 +298,7 @@ def export_single_cog(nc_path, tiff_dir):
         logger.warning(f"Failed to export COG {nc_path}: {e}")
         return None
 
-def export_cogs(run_dir, base_zoom, client=None):
-    """
-    Convert NetCDF tiles at base_zoom to Cloud Optimized GeoTIFFs.
-    """
-    nc_dir = run_dir / "nc"
-    tiff_dir = run_dir / "tiff"
-    tiff_dir.mkdir(parents=True, exist_ok=True)
-    
-    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
-    logger.info(f"Exporting {len(ncs)} COGs for Zoom {base_zoom}...")
-    
-    if client:
-        from dask.distributed import as_completed
-        futures = [client.submit(export_single_cog, nc, tiff_dir) for nc in ncs]
-        for _ in tqdm(as_completed(futures), total=len(futures), desc="Exporting COGs"):
-            pass
-    else:
-        for nc in tqdm(ncs, desc="Exporting COGs"):
-            export_single_cog(nc, tiff_dir)
+
 
 @click.command()
 @click.option("--run-dir", type=click.Path(exists=True, path_type=Path), required=True, help="Path to the run directory.")
