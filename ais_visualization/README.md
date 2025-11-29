@@ -99,6 +99,9 @@ Process the raw NetCDF files to generate seamless, transparent PNGs and lower zo
 ```bash
 # Run post-processing on a specific run directory
 uv run post_process.py --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
+
+# Optional: Clean up intermediate NetCDF files to save space
+uv run post_process.py --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7 --clean-intermediate
 ```
 
 This script will:

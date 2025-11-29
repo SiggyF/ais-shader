@@ -289,8 +289,8 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max):
 @click.command()
 @click.option("--run-dir", type=click.Path(exists=True, path_type=Path), required=True, help="Path to the run directory.")
 @click.option("--base-zoom", type=int, default=7, help="Base zoom level to render.")
-@click.option("--scheduler", type=str, default=None, help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786).")
-def main(run_dir, base_zoom, scheduler):
+@click.option("--clean-intermediate", is_flag=True, help="Delete intermediate NetCDF files (Zoom 0 to base-zoom-1) after processing.")
+def main(run_dir, base_zoom, scheduler, clean_intermediate):
     """
     Post-process NetCDFs to PNGs with global scaling and transparency.
     """
@@ -338,6 +338,20 @@ def main(run_dir, base_zoom, scheduler):
     
     # 4. Generate Pyramid
     generate_pyramid(run_dir, base_zoom, cmap, global_max)
+    
+    # 5. Cleanup Intermediate Files
+    if clean_intermediate:
+        logger.info("Cleaning up intermediate NetCDF files...")
+        # Delete all .nc files where zoom < base_zoom
+        for nc in nc_dir.glob("tile_*_counts.nc"):
+            try:
+                parts = nc.name.split("_")
+                z = int(parts[1])
+                if z < base_zoom:
+                    nc.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete {nc}: {e}")
+        logger.info("Cleanup complete.")
 
 if __name__ == "__main__":
     main()
