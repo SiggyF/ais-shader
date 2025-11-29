@@ -223,10 +223,14 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
         parts = child_path.name.split("_")
         cx, cy = int(parts[2]), int(parts[3])
         
+        # Determine quadrant
         is_right = cx % 2
         is_bottom = cy % 2
         
-        y_slice = slice(is_bottom * 512, (is_bottom + 1) * 512)
+        # Invert Y-slice logic to construct a Bottom-up array (NetCDF standard)
+        # Bottom child (is_bottom=1, Odd Y) goes to Low Indices (0:512)
+        # Top child (is_bottom=0, Even Y) goes to High Indices (512:1024)
+        y_slice = slice((1 - is_bottom) * 512, (2 - is_bottom) * 512)
         x_slice = slice(is_right * 512, (is_right + 1) * 512)
         
         if non_spatial_dims:
