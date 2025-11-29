@@ -5,9 +5,11 @@ A scalable Python pipeline to visualize AIS vessel tracks from large Parquet dat
 ## Features
 
 - **Scalable Processing**: Built with [Dask](https://dask.org/) and [Datashader](https://datashader.org/) to handle datasets larger than memory.
-- **Tiled Output**: Generates Web Mercator tiles (Zoom Level 5 by default) compatible with web maps (TMS).
+- **Seamless Tiling**: Calculates a global maximum across all tiles to ensure consistent color scaling and eliminate edge artifacts.
+- **Smart Transparency**: Custom "Electric Blue" colormap with gradual alpha transparency for low-density areas.
+- **Full Pyramid**: Generates Zoom levels 0-7, allowing for smooth zooming from global view to details.
+- **Robust Format**: Uses NetCDF for intermediate storage to handle multi-dimensional categorical data.
 - **Dual Formats**: Exports both **PNG** (for display) and **Cloud Optimized GeoTIFF (COG)** (for analysis).
-- **Modern Styling**: "Electric Blue" colormap with transparency for low-density areas.
 - **Anti-Aliasing**: Renders tracks as smooth lines (`LineString`) with anti-aliasing.
 - **Configurable**: All settings (bbox, zoom, palette) are defined in `config.toml`.
 
@@ -113,7 +115,22 @@ This script will:
     - Computes the subset to a local GeoDataFrame.
     - Renders the tracks using Datashader (`cvs.line`).
     - Applies the colormap and transparency.
+    - Applies the colormap and transparency.
     - Exports as PNG and COG.
+
+## Output Structure
+
+```
+rendered/run_YYYYMMDD_HHMMSS/
+    ├── nc/
+    │   └── tile_z_x_y_counts.nc    # Raw count data (NetCDF)
+    ├── png/
+    │   └── z/
+    │       └── x/
+    │           └── y.png           # Visualized tiles (TMS)
+    └── tiff/
+        └── tile_z_x_y_cog.tif      # Cloud Optimized GeoTIFFs
+```
 
 ## Project Structure
 
