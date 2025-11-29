@@ -91,7 +91,7 @@ def render_tile(nc_path, output_path, cmap, global_max, log_scale=True):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path)
 
-def process_zoom_level(run_dir, zoom, cmap, global_max):
+def process_zoom_level(run_dir, zoom, cmap, global_max, client):
     """
     Process all NetCDFs for a specific zoom level.
     """
@@ -105,35 +105,65 @@ def process_zoom_level(run_dir, zoom, cmap, global_max):
     if not ncs:
         return
 
-    if not ncs:
-        return
-
     # Render in parallel using Dask
-    from dask.distributed import get_client, as_completed
-    try:
-        client = get_client()
-        logger.info(f"Using Dask client: {client}")
-    except ValueError:
-        logger.warning("No Dask client found. Falling back to serial execution.")
-        client = None
+    from dask.distributed import as_completed
+    
+    futures = []
+    for nc in ncs:
+        parts = nc.name.split("_")
+        x, y = parts[2], parts[3]
+        png_path = png_dir / str(zoom) / x / f"{y}.png"
+        futures.append(client.submit(render_tile, nc, png_path, cmap, global_max))
+    
+    for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Rendering Zoom {zoom}"):
+        pass
 
-    if client:
-        futures = []
-        for nc in ncs:
-            parts = nc.name.split("_")
-            x, y = parts[2], parts[3]
-            png_path = png_dir / str(zoom) / x / f"{y}.png"
-            futures.append(client.submit(render_tile, nc, png_path, cmap, global_max))
+def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
+    """
+    Generate lower zoom levels by aggregating upper levels.
+    """
+    nc_dir = run_dir / "nc"
+    
+    # Iterate from base_zoom - 1 down to 0 (must be sequential)
+    for z in range(base_zoom - 1, -1, -1):
+        logger.info(f"Generating Zoom {z}...")
         
-        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Rendering Zoom {zoom}"):
+        child_ncs = list(nc_dir.glob(f"tile_{z+1}_*_counts.nc"))
+        
+        parents = {}
+        for child in child_ncs:
+            parts = child.name.split("_")
+            cx, cy = int(parts[2]), int(parts[3])
+            px, py = cx // 2, cy // 2
+            parent_key = (z, px, py)
+            if parent_key not in parents:
+                parents[parent_key] = []
+            parents[parent_key].append(child)
+            
+        # Process parents in parallel
+        from dask.distributed import as_completed
+        futures = []
+        for parent_key, children in parents.items():
+            futures.append(client.submit(process_parent_tile, parent_key, children, nc_dir, run_dir, cmap, global_max))
+        
+        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Zoom {z}"):
             pass
-    else:
-        # Serial fallback (or ProcessPoolExecutor if we wanted, but let's stick to Dask or Serial)
-        for nc in tqdm(ncs, desc=f"Rendering Zoom {zoom}"):
-            parts = nc.name.split("_")
-            x, y = parts[2], parts[3]
-            png_path = png_dir / str(zoom) / x / f"{y}.png"
-            render_tile(nc, png_path, cmap, global_max)
+
+def export_cogs(run_dir, base_zoom, client):
+    """
+    Convert NetCDF tiles at base_zoom to Cloud Optimized GeoTIFFs.
+    """
+    nc_dir = run_dir / "nc"
+    tiff_dir = run_dir / "tiff"
+    tiff_dir.mkdir(parents=True, exist_ok=True)
+    
+    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
+    logger.info(f"Exporting {len(ncs)} COGs for Zoom {base_zoom}...")
+    
+    from dask.distributed import as_completed
+    futures = [client.submit(export_single_cog, nc, tiff_dir) for nc in ncs]
+    for _ in tqdm(as_completed(futures), total=len(futures), desc="Exporting COGs"):
+        pass
 
 def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max):
     """
@@ -371,14 +401,14 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
     cmap = create_transparent_cmap(colors, min_alpha=0.0, max_alpha=1.0)
     
     # 3. Render Base Zoom
-    process_zoom_level(run_dir, base_zoom, cmap, global_max)
+    process_zoom_level(run_dir, base_zoom, cmap, global_max, client)
     
     # 4. Generate Pyramid
-    generate_pyramid(run_dir, base_zoom, cmap, global_max, client=client)
+    generate_pyramid(run_dir, base_zoom, cmap, global_max, client)
     
     # 5. Export COGs
     if cogs:
-        export_cogs(run_dir, base_zoom, client=client)
+        export_cogs(run_dir, base_zoom, client)
 
     # 6. Cleanup Intermediate Files
     if clean_intermediate:
