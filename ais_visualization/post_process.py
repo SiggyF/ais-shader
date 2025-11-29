@@ -185,52 +185,46 @@ def export_cogs(run_dir, base_zoom, client):
     for _ in tqdm(as_completed(futures), total=len(futures), desc="Exporting COGs"):
         pass
 
-def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max):
+def aggregate_children(parent_key, children):
     """
-    Process a single parent tile: aggregate children, save NetCDF, render PNG.
+    Aggregate child NetCDF files into a single parent DataArray.
     """
     z, px, py = parent_key
-    
-    # 1. Read all children to find union of categories
     child_ds_list = []
     all_categories = set()
     
     for child_path in children:
-        ds = xr.open_dataset(child_path, engine="netcdf4")
-        # Find the correct data variable
-        var_name = None
-        if "counts" in ds.data_vars:
-            var_name = "counts"
-        elif "__xarray_dataarray_variable__" in ds.data_vars:
-            var_name = "__xarray_dataarray_variable__"
-        else:
-            # Fallback: pick first non-spatial_ref variable
-            for v in ds.data_vars:
-                if v != "spatial_ref":
-                    var_name = v
-                    break
-        
-        if not var_name:
-            logger.warning(f"Skipping {child_path}: No data variable found. Vars: {list(ds.data_vars)}")
-            continue
+        # Use engine="netcdf4" explicitly
+        with xr.open_dataset(child_path, engine="netcdf4") as ds:
+            # Assume "counts" variable or fallback to first non-spatial
+            if "counts" in ds.data_vars:
+                da = ds["counts"]
+            else:
+                # Fallback: pick first non-spatial_ref variable
+                # This assumes the structure is consistent across files
+                vars = [v for v in ds.data_vars if v != "spatial_ref"]
+                if not vars:
+                    logger.warning(f"Skipping {child_path}: No data variable found.")
+                    continue
+                da = ds[vars[0]]
 
-        da = ds[var_name]
-        child_ds_list.append((child_path, da))
-        
-        non_spatial_dims = [d for d in da.dims if d not in ('y', 'x', 'band')]
-        if non_spatial_dims:
-            cat_dim = non_spatial_dims[0]
-            cats = da.coords[cat_dim].values
-            all_categories.update(cats)
+            # Load data into memory to avoid file handle issues during aggregation
+            da.load()
+            child_ds_list.append((child_path, da))
+            
+            non_spatial_dims = [d for d in da.dims if d not in ('y', 'x', 'band')]
+            if non_spatial_dims:
+                cat_dim = non_spatial_dims[0]
+                cats = da.coords[cat_dim].values
+                all_categories.update(cats)
     
     if not child_ds_list:
-        logger.warning(f"No children processed for parent {parent_key}")
-        return
+        return None
 
     # Sort categories for consistency
     sorted_categories = sorted(list(all_categories))
     
-    # 2. Create Parent DataArray
+    # Create Parent DataArray
     tile_size = 1024
     template_da = child_ds_list[0][1]
     parent_dims = list(template_da.dims)
@@ -250,9 +244,8 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
         parent_shape = [template_da.sizes[d] if d not in ('y', 'x') else tile_size for d in parent_dims]
 
     parent_data = np.zeros(parent_shape, dtype=template_da.dtype)
-    da_parent = xr.DataArray(parent_data, dims=parent_dims, coords=parent_coords)
     
-    # 3. Fill Parent
+    # Fill Parent
     for child_path, da_child in child_ds_list:
         parts = child_path.name.split("_")
         cx, cy = int(parts[2]), int(parts[3])
@@ -262,8 +255,6 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
         is_bottom = cy % 2
         
         # Invert Y-slice logic to construct a Bottom-up array (NetCDF standard)
-        # Bottom child (is_bottom=1, Odd Y) goes to Low Indices (0:512)
-        # Top child (is_bottom=0, Even Y) goes to High Indices (512:1024)
         y_slice = slice((1 - is_bottom) * 512, (2 - is_bottom) * 512)
         x_slice = slice(is_right * 512, (is_right + 1) * 512)
         
@@ -283,25 +274,36 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
         
         parent_data[tuple(np_slices)] = coarsened.values
 
-    da_parent.values = parent_data
+    da_parent = xr.DataArray(parent_data, dims=parent_dims, coords=parent_coords)
+    da_parent.name = "counts"
+    return da_parent
+
+def save_netcdf(da, path):
+    """
+    Save DataArray to NetCDF with compression.
+    """
+    encoding = {da.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
+    da = da.astype("int32")
+    da.to_netcdf(path, encoding=encoding, engine="netcdf4")
+    logger.info(f"Saved parent NetCDF: {path}")
+
+def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max):
+    """
+    Process a single parent tile: aggregate children, save NetCDF, render PNG.
+    """
+    z, px, py = parent_key
     
-    # Save Parent NetCDF
+    # 1. Aggregate
+    da_parent = aggregate_children(parent_key, children)
+    if da_parent is None:
+        logger.warning(f"No children processed for parent {parent_key}")
+        return
+
+    # 2. Save NetCDF
     parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}_counts.nc"
+    save_netcdf(da_parent, parent_nc_path)
     
-    # Enable compression
-    if not da_parent.name:
-        da_parent.name = "counts"
-    
-    # Use int32 and zlib compression
-    encoding = {da_parent.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
-    
-    # Ensure int32
-    da_parent = da_parent.astype("int32")
-    
-    da_parent.to_netcdf(parent_nc_path, encoding=encoding, engine="netcdf4")
-    logger.info(f"Saved parent NetCDF: {parent_nc_path}")
-    
-    # Render Parent PNG
+    # 3. Render PNG
     png_path = run_dir / "png" / str(z) / str(px) / f"{py}.png"
     render_tile(parent_nc_path, png_path, cmap, global_max)
 
