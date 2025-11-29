@@ -1,19 +1,20 @@
-
 import logging
 import sys
 from pathlib import Path
-import click
-import rioxarray
+from collections import defaultdict
 import xarray as xr
 import numpy as np
+import rioxarray
+from tqdm import tqdm
+import datashader.transfer_functions as tf
+from datashader.colors import viridis
+from dask.distributed import Client, as_completed
+import dask
+from concurrent.futures import ProcessPoolExecutor
+import click
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from concurrent.futures import ProcessPoolExecutor
-from tqdm import tqdm
-from dask.distributed import Client, as_completed
-import dask
-from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -48,9 +49,9 @@ def render_tile(nc_path, output_path, cmap, global_max, log_scale=True):
     """
     Render a single NetCDF to PNG using global scaling and custom colormap.
     """
-    # Open NetCDF
-    # Use open_dataset because open_dataarray fails with multiple vars (spatial_ref)
-    with xr.open_dataset(nc_path) as ds:
+    # Open Zarr
+    # Use open_zarr
+    with xr.open_zarr(nc_path) as ds:
         # The variable name is likely __xarray_dataarray_variable__ or similar
         # We can find the data variable by checking data_vars
         # Find the correct data variable
@@ -111,11 +112,13 @@ def process_zoom_level(run_dir, zoom, cmap, global_max, client):
     """
     Process all NetCDFs for a specific zoom level.
     """
-    nc_dir = run_dir / "nc"
+    nc_dir = run_dir / "zarr"
     png_dir = run_dir / "png"
     
-    # Find all NetCDFs for this zoom
-    ncs = list(nc_dir.glob(f"tile_{zoom}_*_counts.nc"))
+    # Find all Zarrs for this zoom
+    # DirectoryStore zarrs are directories, so glob works but we need to check if it's a dir
+    # Actually glob returns paths, we can just use them
+    ncs = list(nc_dir.glob(f"tile_{zoom}_*.zarr"))
     logger.info(f"Found {len(ncs)} tiles for Zoom {zoom}")
     
     if not ncs:
@@ -138,13 +141,13 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
     """
     Generate lower zoom levels by aggregating upper levels.
     """
-    nc_dir = run_dir / "nc"
+    nc_dir = run_dir / "zarr"
     
     # Iterate from base_zoom - 1 down to 0 (must be sequential)
     for z in range(base_zoom - 1, -1, -1):
         logger.info(f"Generating Zoom {z}...")
         
-        child_ncs = list(nc_dir.glob(f"tile_{z+1}_*_counts.nc"))
+        child_ncs = list(nc_dir.glob(f"tile_{z+1}_*.zarr"))
         
         parents = defaultdict(list)
         for child in child_ncs:
@@ -173,14 +176,13 @@ def export_cogs(run_dir, base_zoom, client):
     """
     Convert NetCDF tiles at base_zoom to Cloud Optimized GeoTIFFs.
     """
-    nc_dir = run_dir / "nc"
+    nc_dir = run_dir / "zarr"
     tiff_dir = run_dir / "tiff"
     tiff_dir.mkdir(parents=True, exist_ok=True)
     
-    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
+    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*.zarr"))
     logger.info(f"Exporting {len(ncs)} COGs for Zoom {base_zoom}...")
     
-    from dask.distributed import as_completed
     futures = [client.submit(export_single_cog, nc, tiff_dir) for nc in ncs]
     for _ in tqdm(as_completed(futures), total=len(futures), desc="Exporting COGs"):
         pass
@@ -194,8 +196,8 @@ def aggregate_children(parent_key, children):
     all_categories = set()
     
     for child_path in children:
-        # Use engine="netcdf4" explicitly
-        with xr.open_dataset(child_path, engine="netcdf4") as ds:
+        # Use open_zarr
+        with xr.open_zarr(child_path) as ds:
             # Assume "counts" variable or fallback to first non-spatial
             if "counts" in ds.data_vars:
                 da = ds["counts"]
@@ -278,20 +280,21 @@ def aggregate_children(parent_key, children):
     da_parent.name = "counts"
     return da_parent
 
-def save_netcdf(da, path):
+def save_zarr(da, path):
     """
-    Save DataArray to NetCDF with compression.
+    Save DataArray to Zarr with compression.
     """
-    encoding = {da.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
+    # Zarr handles compression automatically (Blosc default)
     da = da.astype("int32")
-    da.to_netcdf(path, encoding=encoding, engine="netcdf4")
-    logger.info(f"Saved parent NetCDF: {path}")
+    da.to_zarr(path, mode="w", consolidated=True)
+    logger.info(f"Saved parent Zarr: {path}")
 
 def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max):
     """
-    Process a single parent tile: aggregate children, save NetCDF, render PNG.
+    Process a single parent tile: aggregate children, save Zarr, render PNG.
     """
     z, px, py = parent_key
+    logger.info(f"Processing parent {parent_key} with {len(children)} children")
     
     # 1. Aggregate
     da_parent = aggregate_children(parent_key, children)
@@ -299,9 +302,9 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
         logger.warning(f"No children processed for parent {parent_key}")
         return
 
-    # 2. Save NetCDF
-    parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}_counts.nc"
-    save_netcdf(da_parent, parent_nc_path)
+    # 2. Save Zarr
+    parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}.zarr"
+    save_zarr(da_parent, parent_nc_path)
     
     # 3. Render PNG
     png_path = run_dir / "png" / str(z) / str(px) / f"{py}.png"
@@ -314,7 +317,7 @@ def export_single_cog(nc_path, tiff_dir):
     Convert a single NetCDF tile to COG.
     """
     try:
-        with xr.open_dataset(nc_path, engine="netcdf4") as ds:
+        with xr.open_zarr(nc_path) as ds:
             # Find the correct data variable
             var_name = None
             if "counts" in ds.data_vars:
@@ -376,7 +379,7 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
     Post-process NetCDFs to PNGs with global scaling and transparency.
     """
     # Initialize Dask Client
-    from dask.distributed import Client
+    
     if scheduler:
         client = Client(scheduler)
         logger.info(f"Connected to Dask scheduler at {scheduler}")
@@ -384,15 +387,15 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
         client = Client() # Local cluster
         logger.info(f"Started local Dask cluster: {client.dashboard_link}")
 
-    nc_dir = run_dir / "nc"
+    nc_dir = run_dir / "zarr"
     
     # 1. Calculate Global Max
     logger.info("Calculating global max...")
     global_max = 0
-    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
+    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*.zarr"))
     
     for nc in tqdm(ncs, desc="Scanning tiles"):
-        with xr.open_dataset(nc, engine="netcdf4") as ds:
+        with xr.open_zarr(nc) as ds:
             # Find the correct data variable
             var_name = None
             if "counts" in ds.data_vars:
@@ -439,14 +442,15 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
 
     # 6. Cleanup Intermediate Files
     if clean_intermediate:
-        logger.info("Cleaning up intermediate NetCDF files...")
-        # Delete all .nc files where zoom < base_zoom
-        for nc in nc_dir.glob("tile_*_counts.nc"):
+        logger.info("Cleaning up intermediate Zarr files...")
+        import shutil
+        # Delete all .zarr files where zoom < base_zoom
+        for nc in nc_dir.glob("tile_*.zarr"):
             try:
                 parts = nc.name.split("_")
                 z = int(parts[1])
                 if z < base_zoom:
-                    nc.unlink()
+                    shutil.rmtree(nc)
             except Exception as e:
                 logger.warning(f"Failed to delete {nc}: {e}")
         logger.info("Cleanup complete.")

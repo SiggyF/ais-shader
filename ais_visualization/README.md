@@ -119,20 +119,38 @@ This script will:
     - Renders the tracks using Datashader (`cvs.line`).
     - Applies the colormap and transparency.
     - Applies the colormap and transparency.
-    - Exports as PNG and COG.
+### Output Structure
 
-## Output Structure
+The pipeline generates the following directory structure:
 
 ```
-rendered/run_YYYYMMDD_HHMMSS/
-    ├── nc/
-    │   └── tile_z_x_y_counts.nc    # Raw count data (NetCDF)
-    ├── png/
-    │   └── z/
-    │       └── x/
-    │           └── y.png           # Visualized tiles (TMS)
-    └── tiff/
-        └── tile_z_x_y_cog.tif      # Cloud Optimized GeoTIFFs
+rendered/
+  run_YYYYMMDD_HHMMSS/
+    metadata.json       # Run configuration and details
+    nc/                 # Intermediate NetCDF files (compressed)
+      tile_7_*.nc       # Base zoom tiles
+      tile_6_*.nc       # aggregated tiles
+      ...
+    png/                # Visualized PNG tiles
+      7/                # Zoom 7
+      6/                # Zoom 6
+      ...
+    tiff/               # Cloud Optimized GeoTIFFs (if --cogs used)
+      tile_7_*.tif
+```
+
+### Storage Estimates
+
+With `zlib` compression (level 5) and `int32` data types:
+*   **Zoom 7**: ~93 MB (143 tiles)
+*   **Zoom 10 (Estimated)**: ~6 GB (assuming ~9000 tiles)
+
+### Stability Note
+
+For the pyramid generation step (`post_process.py`), it is recommended to limit concurrency to avoid NetCDF/HDF5 locking issues:
+```bash
+# Run with a single worker for maximum stability
+HDF5_USE_FILE_LOCKING=FALSE uv run dask worker tcp://127.0.0.1:8786 --nworkers 1 --memory-limit 8GB
 ```
 
 ## Project Structure

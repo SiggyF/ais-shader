@@ -14,7 +14,7 @@ from datashader.colors import viridis
 
 logger = logging.getLogger(__name__)
 
-def process_single_tile(tile, coords_ddf, png_dir: Path, nc_dir: Path, config: dict):
+def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config: dict):
     """
     Process a single tile: filter, compute, render, and save.
     """
@@ -81,18 +81,18 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, nc_dir: Path, config: d
     da.rio.write_crs("EPSG:3857", inplace=True)
     da.rio.write_transform(transform, inplace=True)
     
-    # Save as NetCDF (supports N-dims better than TIFF for intermediate)
-    nc_path = nc_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.nc"
+    # Save as Zarr
+    zarr_path = zarr_dir / f"tile_{tile.z}_{tile.x}_{tile.y}.zarr"
     
-    # Enable compression
-    # Ensure variable name is set for encoding
+    # Enable compression (Blosc is default and good)
+    # Ensure variable name is set
     if not da.name:
         da.name = "counts"
     
-    # Use int32 and zlib compression
-    encoding = {da.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
-    
-    da.to_netcdf(nc_path, encoding=encoding, engine="netcdf4")
+    # Use int32
+    # Zarr handles compression automatically, but we can specify compressor if needed.
+    # Default is usually Blosc/LZ4 which is fast.
+    da.to_zarr(zarr_path, mode="w", consolidated=True)
     
     # Logging stats
     if isinstance(agg, xr.Dataset):
@@ -105,7 +105,7 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, nc_dir: Path, config: d
         agg_max = float(agg.max())
         logger.info(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
 
-    logger.info(f"Saved NetCDF for tile {tile}")
+    logger.info(f"Saved Zarr for tile {tile}")
     
 
 
@@ -131,8 +131,8 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
     tiff_dir = output_dir / "tiff"
     tiff_dir.mkdir(parents=True, exist_ok=True)
     
-    nc_dir = output_dir / "nc"
-    nc_dir.mkdir(parents=True, exist_ok=True)
+    zarr_dir = output_dir / "zarr"
+    zarr_dir.mkdir(parents=True, exist_ok=True)
     
     png_dir = output_dir / "png"
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -146,4 +146,4 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
     
     for i, tile in enumerate(tiles):
         logger.info(f"Processing Tile: {tile}...")
-        process_single_tile(tile, coords_ddf, png_dir, nc_dir, config)
+        process_single_tile(tile, coords_ddf, png_dir, zarr_dir, config)

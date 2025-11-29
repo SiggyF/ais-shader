@@ -1,3 +1,4 @@
+```python
 import logging
 import sys
 import time
@@ -5,7 +6,9 @@ from datetime import datetime
 from pathlib import Path
 import click
 import tomllib
+import dask
 from dask.distributed import Client
+import dask.dataframe as dd
 
 # Import from src modules
 from src.data_loader import load_and_process_data
@@ -61,6 +64,9 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         input_file = Path(config["data"]["input_file"])
         logger.info(f"Using input file from config: {input_file}")
 
+    # Initialize Dask Client
+    dask.config.set({"distributed.scheduler.allowed-failures": 0})
+    
     if scheduler:
         logger.info(f"Connecting to Dask scheduler at {scheduler}...")
         client = Client(scheduler)
