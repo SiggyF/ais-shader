@@ -60,12 +60,27 @@ def render_tiles(coords_ddf, output_dir: Path, zoom: int = 5):
             y_range=(bbox.bottom, bbox.top)
         )
         
+        # Filter data for this tile using spatial index
+        # This is more robust than passing the full dask ddf to datashader
+        subset = coords_ddf.cx[bbox.left:bbox.right, bbox.bottom:bbox.top]
+        
+        # Compute to local GeoDataFrame
+        try:
+            gdf_local = subset.compute()
+        except Exception as e:
+            logger.warning(f"Failed to compute subset for {tile}: {e}")
+            continue
+            
+        if len(gdf_local) == 0:
+            logger.info(f"Tile {tile} is empty. Skipping.")
+            continue
+
         # Aggregate using lines
         # line_width=1 enables anti-aliasing in Datashader
         try:
-            agg = cvs.line(coords_ddf, geometry='geometry', line_width=1)
+            agg = cvs.line(gdf_local, geometry='geometry', line_width=1)
         except ValueError as e:
-            logger.warning(f"Rendering failed for tile {tile} (likely empty): {e}")
+            logger.warning(f"Rendering failed for tile {tile}: {e}")
             continue
         
         # Check if empty
