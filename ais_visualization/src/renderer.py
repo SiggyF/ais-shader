@@ -14,7 +14,7 @@ from datashader.colors import viridis
 
 logger = logging.getLogger(__name__)
 
-def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config: dict):
+def process_single_tile(tile, coords_ddf, png_dir: Path, nc_dir: Path, config: dict):
     """
     Process a single tile: filter, compute, render, and save.
     """
@@ -71,10 +71,10 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     if isinstance(agg, xr.Dataset):
         # Multi-band (Categorical)
         da = agg.to_array(dim="band")
-        da = da.fillna(0).astype("uint32")
+        da = da.fillna(0).astype("int32")
     else:
         # Single band
-        da = agg.fillna(0).astype("uint32")
+        da = agg.fillna(0).astype("int32")
         da = da.expand_dims(dim={'band': 1})
 
     # Set CRS and Transform
@@ -83,7 +83,16 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, tiff_dir: Path, config:
     
     # Save as NetCDF (supports N-dims better than TIFF for intermediate)
     nc_path = nc_dir / f"tile_{tile.z}_{tile.x}_{tile.y}_counts.nc"
-    da.to_netcdf(nc_path)
+    
+    # Enable compression
+    # Ensure variable name is set for encoding
+    if not da.name:
+        da.name = "counts"
+    
+    # Use int32 and zlib compression
+    encoding = {da.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
+    
+    da.to_netcdf(nc_path, encoding=encoding, engine="netcdf4")
     
     # Logging stats
     if isinstance(agg, xr.Dataset):

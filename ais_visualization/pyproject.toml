@@ -21,4 +21,5 @@ dependencies = [
     "rioxarray>=0.20.0",
     "morecantile>=7.0.0",
     "rio-cogeo>=7.0.0",
+    "netcdf4>=1.7.3",
 ]

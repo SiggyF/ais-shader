@@ -11,6 +11,9 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
+from dask.distributed import Client, as_completed
+import dask
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -50,10 +53,23 @@ def render_tile(nc_path, output_path, cmap, global_max, log_scale=True):
     with xr.open_dataset(nc_path) as ds:
         # The variable name is likely __xarray_dataarray_variable__ or similar
         # We can find the data variable by checking data_vars
-        var_name = list(ds.data_vars)[0]
-        if "__xarray_dataarray_variable__" in ds.data_vars:
+        # Find the correct data variable
+        var_name = None
+        if "counts" in ds.data_vars:
+            var_name = "counts"
+        elif "__xarray_dataarray_variable__" in ds.data_vars:
             var_name = "__xarray_dataarray_variable__"
+        else:
+            # Fallback: pick first non-spatial_ref variable
+            for v in ds.data_vars:
+                if v != "spatial_ref":
+                    var_name = v
+                    break
         
+        if not var_name:
+            logger.warning(f"No data variable found in {nc_path}")
+            return
+
         da = ds[var_name]
         
         # Sum over extra dimensions to get 2D (y, x) for visualization
@@ -130,15 +146,19 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
         
         child_ncs = list(nc_dir.glob(f"tile_{z+1}_*_counts.nc"))
         
-        parents = {}
+        parents = defaultdict(list)
         for child in child_ncs:
             parts = child.name.split("_")
+            # parts[1] is the zoom level, parts[2] is x, parts[3] is y
             cx, cy = int(parts[2]), int(parts[3])
             px, py = cx // 2, cy // 2
-            parent_key = (z, px, py)
-            if parent_key not in parents:
-                parents[parent_key] = []
+            parent_key = (z, px, py) # Parent zoom level is 'z'
             parents[parent_key].append(child)
+            
+        logger.info(f"Zoom {z}: Found {len(child_ncs)} child tiles, grouped into {len(parents)} parent tiles.")
+        if len(parents) > 0:
+            first_parent_key = list(parents.keys())[0]
+            logger.info(f"Sample parent {first_parent_key} has {len(parents[first_parent_key])} children: {[p.name for p in parents[first_parent_key]]}")
             
         # Process parents in parallel
         from dask.distributed import as_completed
@@ -176,11 +196,24 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
     all_categories = set()
     
     for child_path in children:
-        ds = xr.open_dataset(child_path)
-        var_name = list(ds.data_vars)[0]
-        if "__xarray_dataarray_variable__" in ds.data_vars:
+        ds = xr.open_dataset(child_path, engine="netcdf4")
+        # Find the correct data variable
+        var_name = None
+        if "counts" in ds.data_vars:
+            var_name = "counts"
+        elif "__xarray_dataarray_variable__" in ds.data_vars:
             var_name = "__xarray_dataarray_variable__"
+        else:
+            # Fallback: pick first non-spatial_ref variable
+            for v in ds.data_vars:
+                if v != "spatial_ref":
+                    var_name = v
+                    break
         
+        if not var_name:
+            logger.warning(f"Skipping {child_path}: No data variable found. Vars: {list(ds.data_vars)}")
+            continue
+
         da = ds[var_name]
         child_ds_list.append((child_path, da))
         
@@ -191,6 +224,7 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
             all_categories.update(cats)
     
     if not child_ds_list:
+        logger.warning(f"No children processed for parent {parent_key}")
         return
 
     # Sort categories for consistency
@@ -253,7 +287,19 @@ def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max)
     
     # Save Parent NetCDF
     parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}_counts.nc"
-    da_parent.to_netcdf(parent_nc_path)
+    
+    # Enable compression
+    if not da_parent.name:
+        da_parent.name = "counts"
+    
+    # Use int32 and zlib compression
+    encoding = {da_parent.name: {"zlib": True, "complevel": 5, "_FillValue": -1}}
+    
+    # Ensure int32
+    da_parent = da_parent.astype("int32")
+    
+    da_parent.to_netcdf(parent_nc_path, encoding=encoding, engine="netcdf4")
+    logger.info(f"Saved parent NetCDF: {parent_nc_path}")
     
     # Render Parent PNG
     png_path = run_dir / "png" / str(z) / str(px) / f"{py}.png"
@@ -266,10 +312,23 @@ def export_single_cog(nc_path, tiff_dir):
     Convert a single NetCDF tile to COG.
     """
     try:
-        with xr.open_dataset(nc_path) as ds:
-            var_name = list(ds.data_vars)[0]
-            if "__xarray_dataarray_variable__" in ds.data_vars:
+        with xr.open_dataset(nc_path, engine="netcdf4") as ds:
+            # Find the correct data variable
+            var_name = None
+            if "counts" in ds.data_vars:
+                var_name = "counts"
+            elif "__xarray_dataarray_variable__" in ds.data_vars:
                 var_name = "__xarray_dataarray_variable__"
+            else:
+                # Fallback: pick first non-spatial_ref variable
+                for v in ds.data_vars:
+                    if v != "spatial_ref":
+                        var_name = v
+                        break
+            
+            if not var_name:
+                return None
+
             da = ds[var_name]
             
             # Prepare for GeoTIFF: needs (band, y, x)
@@ -331,10 +390,23 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
     ncs = list(nc_dir.glob(f"tile_{base_zoom}_*_counts.nc"))
     
     for nc in tqdm(ncs, desc="Scanning tiles"):
-        with xr.open_dataset(nc) as ds:
-            var_name = list(ds.data_vars)[0]
-            if "__xarray_dataarray_variable__" in ds.data_vars:
+        with xr.open_dataset(nc, engine="netcdf4") as ds:
+            # Find the correct data variable
+            var_name = None
+            if "counts" in ds.data_vars:
+                var_name = "counts"
+            elif "__xarray_dataarray_variable__" in ds.data_vars:
                 var_name = "__xarray_dataarray_variable__"
+            else:
+                # Fallback: pick first non-spatial_ref variable
+                for v in ds.data_vars:
+                    if v != "spatial_ref":
+                        var_name = v
+                        break
+            
+            if not var_name:
+                continue
+
             da = ds[var_name]
             
             dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
