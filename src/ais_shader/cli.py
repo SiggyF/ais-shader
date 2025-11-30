@@ -55,11 +55,24 @@ def cli():
     default=None,
     help="Path to a run directory to resume.",
 )
-def render(config_file, output_dir, scheduler, input_file, resume_dir):
+@click.option(
+    "--bbox",
+    nargs=4,
+    type=float,
+    default=None,
+    help="Bounding box (minx miny maxx maxy) to override config.",
+)
+@click.option(
+    "--zoom",
+    type=int,
+    default=None,
+    help="Zoom level to override config.",
+)
+def render(config_file, output_dir, scheduler, input_file, resume_dir, bbox, zoom):
     """
     Render tiles from AIS data using Datashader.
     """
-    run_rendering(config_file, output_dir, scheduler, input_file, resume_dir)
+    run_rendering(config_file, output_dir, scheduler, input_file, resume_dir, bbox, zoom)
 
 @cli.command()
 @click.option("--run-dir", type=click.Path(exists=True, path_type=Path), required=True, help="Path to the run directory.")

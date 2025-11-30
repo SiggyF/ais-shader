@@ -1,6 +1,6 @@
 [project]
-name = "ais-visualization"
-version = "0.1.0"
+name = "ais-shader"
+version = "0.2.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -26,7 +26,10 @@ dependencies = [
 ]
 
 [project.scripts]
-ais-visualization = "ais_visualization.cli:cli"
+ais-shader = "ais_shader.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ais_visualization"]
+packages = ["src/ais_shader"]
+
+[tool.uv]
+package = true

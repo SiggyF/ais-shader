@@ -193,7 +193,7 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
             
     logger.info("All tasks completed.")
 
-def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_file: Path, resume_dir: Path = None):
+def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_file: Path, resume_dir: Path = None, bbox: tuple = None, zoom: int = None):
     """
     Main entry point for rendering.
     """
@@ -202,6 +202,14 @@ def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_fil
         config = tomllib.load(f)
         
     logger.info(f"Loaded configuration from {config_file}")
+
+    # Override config with CLI arguments
+    if bbox:
+        config["visualization"]["bbox"] = list(bbox)
+        logger.info(f"Overriding bbox from CLI: {bbox}")
+    if zoom:
+        config["visualization"]["zoom"] = zoom
+        logger.info(f"Overriding zoom from CLI: {zoom}")
     
     # Get input file from CLI or config
     if input_file:

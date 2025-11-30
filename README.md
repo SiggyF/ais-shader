@@ -96,16 +96,19 @@ Generate raw count data (Zarr) for the highest zoom level (e.g., Zoom 7). Zarr i
 
 ```bash
 # Use input file from config.toml
-uv run ais-visualization render
+uv run ais-shader render
 
 # Override input file via CLI
-uv run ais-visualization render --input-file /path/to/other_dataset.parquet
+uv run ais-shader render --input-file /path/to/other_dataset.parquet
 
 # Use a shared Dask scheduler (recommended for large datasets)
-uv run ais-visualization render --scheduler tcp://127.0.0.1:8786
+uv run ais-shader render --scheduler tcp://127.0.0.1:8786
 
 # Resume an interrupted run
-uv run ais-visualization render --resume-dir rendered/run_YYYYMMDD_HHMMSS
+uv run ais-shader render --resume-dir rendered/run_YYYYMMDD_HHMMSS
+
+# Regional Rendering (e.g., NYC Port at Zoom 10)
+uv run ais-shader render --bbox -74.05 40.65 -74.00 40.70 --zoom 10
 ```
 
 This will output `.zarr` files to `rendered/run_YYYYMMDD_HHMMSS/zarr/`.
@@ -116,10 +119,10 @@ Process the raw Zarr files to generate seamless, transparent PNGs and lower zoom
 
 ```bash
 # Run post-processing on a specific run directory
-uv run ais-visualization post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
+uv run ais-shader post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
 
 # Optional: Clean up intermediate Zarr files to save space
-uv run ais-visualization post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7 --clean-intermediate
+uv run ais-shader post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7 --clean-intermediate
 ```
 
 This script will:

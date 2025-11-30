@@ -12,9 +12,9 @@ wheels = [
 ]
 
 [[package]]
-name = "ais-visualization"
-version = "0.1.0"
-source = { virtual = "." }
+name = "ais-shader"
+version = "0.2.0"
+source = { editable = "." }
 dependencies = [
     { name = "bokeh" },
     { name = "cartopy" },
