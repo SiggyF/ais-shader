@@ -131,6 +131,14 @@ To view the raw data or high-resolution exports:
 1.  Open QGIS.
 2.  Drag and drop the `.tif` files from `rendered/run_.../tiff/` directly into the map canvas.
 3.  Since they are COGs, QGIS will handle them efficiently. You can style them using "Singleband pseudocolor".
+4.  **Styles**: We provide pre-configured QGIS Layer Style files (`.qml`) in `docs/styles/`:
+    -   `ais_blue.qml`: The default "Electric Blue" style.
+    -   `ais_dark.qml`: A high-contrast dark theme (Crameri Oslo inspired).
+    -   `ais_light.qml`: A clean light theme (Crameri Batlow inspired).
+    To use them: Right-click the layer -> Properties -> Symbology -> Style -> Load Style...
+
+## Documentation
+- [Architecture & Design](docs/architecture.md): Details on the technology stack, partitioning strategy, and known issues.
 
 ## Pipeline Overview
 
