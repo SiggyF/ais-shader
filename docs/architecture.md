@@ -71,6 +71,7 @@ High-resolution renderings showing vessel track density.
 
 ![Map Detail 1](../docs/images/map_detail_1.png)
 ![Map Detail 2](../docs/images/map_detail_2.png)
+![Map Detail 3](../docs/images/map_detail_3.png)
 
 ### Colormaps
 Custom transparent colormaps used for visualization.
