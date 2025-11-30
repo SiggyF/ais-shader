@@ -179,13 +179,7 @@ With `zlib` compression (level 5) and `int32` data types:
 *   **Zoom 7**: ~93 MB (143 tiles)
 *   **Zoom 10 (Estimated)**: ~6 GB (assuming ~9000 tiles)
 
-### Stability Note
 
-For the pyramid generation step (`post_process.py`), it is recommended to limit concurrency to avoid excessive memory usage:
-```bash
-# Run with a single worker for maximum stability
-uv run dask worker tcp://127.0.0.1:8786 --nworkers 1 --memory-limit 8GB
-```
 
 ## Project Structure
 
