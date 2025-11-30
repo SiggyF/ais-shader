@@ -90,10 +90,20 @@ colormap = "oslo"
 ```
 
 **Note on GeoTIFF Values:**
-- If `line_width = 1` (default for aesthetics), the output GeoTIFFs contain **anti-aliased coverage values** (typically 0.0 to 1.0 per pixel, or accumulated if overlapping).
+- If `line_width = 1` (default for aesthetics), the output GeoTIFFs contain **anti-aliased coverage values** (typically 0.0 to 1.0 per pixel).
 - If `line_width = 0`, the output GeoTIFFs contain **raw integer counts** of vessel tracks passing through each pixel. Use this for analysis.
 
-### 3. Rendering (Phase 1: Raw Data)
+For a detailed analysis of aliasing, saturation, and mass conservation, see [Line Width Analysis](docs/linewidth_analysis.md).
+
+### Recommendation for Analysis vs. Visualization
+
+**For Visualization (Default):**
+Use `line_width = 1`. This produces smooth, anti-aliased lines that represent the *spatial coverage* of the vessel track. It creates visually pleasing maps where diagonal lines appear continuous and smooth.
+
+**For Analysis (Fair Counts):**
+Use `line_width = 0`. This uses Bresenham's algorithm to select exactly one pixel per step along the major axis. This produces **Integer Counts**, which is the "fairest" way to count *events* (vessel transits) without introducing fractional artifacts.
+
+
 
 Generate raw count data (Zarr) for the highest zoom level (e.g., Zoom 7). Zarr is used to support multi-dimensional categorical data and parallel writes.
 
