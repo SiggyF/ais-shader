@@ -104,6 +104,15 @@ Use `line_width = 1`. This produces smooth, anti-aliased lines that represent th
 Use `line_width = 0`. This uses Bresenham's algorithm to select exactly one pixel per step along the major axis. This produces **Integer Counts**, which is the "fairest" way to count *events* (vessel transits) without introducing fractional artifacts.
 
 
+## References & Previous Work
+
+This project builds upon research and visualization techniques developed at TU Delft.
+
+- **"The North Sea is ready for its close-up"** (2021). *TU Delft Stories*. [Link](https://www.tudelft.nl/en/2021/citg/hydraulic-engineering/the-north-sea-is-ready-for-its-close-up)
+- **Solange van der Werff** (PhD Candidate, TU Delft). Research on "Merging Multiple Perspectives to Extend Views on Nautical Systems", including high-resolution AIS visualization and safety monitoring.
+
+
+
 
 Generate raw count data (Zarr) for the highest zoom level (e.g., Zoom 7). Zarr is used to support multi-dimensional categorical data and parallel writes.
 
