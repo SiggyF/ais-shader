@@ -126,7 +126,7 @@ def process_zoom_level(run_dir, zoom, cmap, global_max, client):
     for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Rendering Zoom {zoom}"):
         pass
 
-def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
+def generate_pyramid(run_dir, base_zoom, cmap, client):
     """
     Generate lower zoom levels by aggregating upper levels.
     """
@@ -148,12 +148,31 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
             
         logger.info(f"Zoom {z}: Found {len(child_ncs)} child tiles, grouped into {len(parents)} parent tiles.")
             
-        # Process parents in parallel
+        # Step 1: Aggregate & Save Zarr
         futures = []
         for parent_key, children in parents.items():
-            futures.append(client.submit(process_parent_tile, parent_key, children, nc_dir, run_dir, cmap, global_max))
+            futures.append(client.submit(aggregate_and_save_parent_tile, parent_key, children, nc_dir))
         
-        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Zoom {z}"):
+        # Wait for all aggregations to finish
+        parent_ncs = []
+        for f in tqdm(as_completed(futures), total=len(futures), desc=f"Aggregating Zoom {z}"):
+            res = f.result()
+            if res:
+                parent_ncs.append(res)
+                
+        # Step 2: Calculate Robust Max for this level
+        level_max = calculate_robust_max(nc_dir, z)
+        
+        # Step 3: Render PNGs
+        render_futures = []
+        png_dir = run_dir / "png"
+        for nc in parent_ncs:
+            parts = nc.stem.split("_")
+            px, py = parts[2], parts[3]
+            png_path = png_dir / str(z) / px / f"{py}.png"
+            render_futures.append(client.submit(render_tile, nc, png_path, cmap, level_max))
+            
+        for _ in tqdm(as_completed(render_futures), total=len(render_futures), desc=f"Rendering Zoom {z}"):
             pass
 
 def export_cogs(run_dir, base_zoom, client):
@@ -268,26 +287,25 @@ def save_zarr(da, path):
     da.to_zarr(path, mode="w", consolidated=True)
     logger.info(f"Saved parent Zarr: {path}")
 
-def process_parent_tile(parent_key, children, nc_dir, run_dir, cmap, global_max):
+def aggregate_and_save_parent_tile(parent_key, children, nc_dir):
     """
-    Process a single parent tile: aggregate children, save Zarr, render PNG.
+    Process a single parent tile: aggregate children and save Zarr.
+    Returns path to saved Zarr or None.
     """
     z, px, py = parent_key
-    logger.info(f"Processing parent {parent_key} with {len(children)} children")
+    # logger.debug(f"Processing parent {parent_key} with {len(children)} children")
     
     # 1. Aggregate
     da_parent = aggregate_children(parent_key, children)
     if da_parent is None:
         logger.warning(f"No children processed for parent {parent_key}")
-        return
+        return None
 
     # 2. Save Zarr
     parent_nc_path = nc_dir / f"tile_{z}_{px}_{py}.zarr"
     save_zarr(da_parent, parent_nc_path)
     
-    # 3. Render PNG
-    png_path = run_dir / "png" / str(z) / str(px) / f"{py}.png"
-    render_tile(parent_nc_path, png_path, cmap, global_max)
+    return parent_nc_path
 
 def export_single_cog(nc_path, tiff_dir):
     """
@@ -361,6 +379,72 @@ def export_single_cog(nc_path, tiff_dir):
         logger.warning(f"Failed to export COG {nc_path}: {e}")
         return None
 
+def calculate_robust_max(nc_dir, zoom, sample_size=1_000_000):
+    """
+    Calculate 98th percentile of non-zero values for a specific zoom level.
+    """
+    logger.info(f"Calculating robust max (98th percentile) for Zoom {zoom}...")
+    ncs = list(nc_dir.glob(f"tile_{zoom}_*.zarr"))
+    
+    if not ncs:
+        logger.warning(f"No tiles found for Zoom {zoom}")
+        return 1.0
+
+    samples = []
+    
+    import random
+    random.shuffle(ncs) 
+    
+    # Limit number of tiles to scan
+    tiles_to_scan = ncs[:min(len(ncs), 200)]
+    
+    for nc in tqdm(tiles_to_scan, desc=f"Sampling Zoom {zoom}"):
+        try:
+            with xr.open_zarr(nc) as ds:
+                # Find data variable
+                var_name = None
+                if "counts" in ds.data_vars:
+                    var_name = "counts"
+                elif "__xarray_dataarray_variable__" in ds.data_vars:
+                    var_name = "__xarray_dataarray_variable__"
+                else:
+                    for v in ds.data_vars:
+                        if v != "spatial_ref":
+                            var_name = v
+                            break
+                
+                if not var_name:
+                    continue
+
+                da = ds[var_name]
+                
+                # Sum extra dims
+                dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
+                if dims_to_sum:
+                    data = da.sum(dim=dims_to_sum).values
+                else:
+                    data = da.values
+                
+                # Get non-zero values
+                non_zeros = data[data > 0].flatten()
+                
+                if len(non_zeros) > 0:
+                    if len(samples) < sample_size:
+                        take = min(len(non_zeros), sample_size - len(samples))
+                        samples.extend(non_zeros[:take])
+                    else:
+                        break
+        except Exception as e:
+            logger.warning(f"Failed to sample {nc}: {e}")
+
+    if samples:
+        val = float(np.percentile(samples, 98))
+        logger.info(f"Zoom {zoom} Robust Max: {val}")
+        return val
+    else:
+        logger.warning(f"No data found for Zoom {zoom}. Defaulting to 1.0")
+        return 1.0
+
 def run_post_processing(run_dir, base_zoom, scheduler, clean_intermediate, cogs, config_file):
     """
     Post-process NetCDFs to PNGs with global scaling and transparency.
@@ -393,73 +477,9 @@ def run_post_processing(run_dir, base_zoom, scheduler, clean_intermediate, cogs,
 
     nc_dir = run_dir / "zarr"
     
-    # 1. Calculate Robust Max (98th Percentile)
-    logger.info("Calculating robust max (98th percentile)...")
-    ncs = list(nc_dir.glob(f"tile_{base_zoom}_*.zarr"))
-    
-    # Reservoir sampling to estimate percentile
-    sample_size = 1_000_000
-    samples = []
-    total_samples = 0
-    
-    import random
-    random.shuffle(ncs) # Shuffle to get random sample of tiles
-    
-    # Limit number of tiles to scan to avoid long startup if dataset is huge
-    # But for accurate percentile we should try to see enough.
-    # Let's scan up to 100 tiles or all if less.
-    tiles_to_scan = ncs[:min(len(ncs), 200)]
-    
-    for nc in tqdm(tiles_to_scan, desc="Sampling tiles"):
-        try:
-            with xr.open_zarr(nc) as ds:
-                # Find the correct data variable
-                var_name = None
-                if "counts" in ds.data_vars:
-                    var_name = "counts"
-                elif "__xarray_dataarray_variable__" in ds.data_vars:
-                    var_name = "__xarray_dataarray_variable__"
-                else:
-                    for v in ds.data_vars:
-                        if v != "spatial_ref":
-                            var_name = v
-                            break
-                
-                if not var_name:
-                    continue
+    # 1. Calculate Robust Max (98th Percentile) for Base Zoom
+    global_max = calculate_robust_max(nc_dir, base_zoom)
 
-                da = ds[var_name]
-                
-                # Sum extra dims
-                dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
-                if dims_to_sum:
-                    data = da.sum(dim=dims_to_sum).values
-                else:
-                    data = da.values
-                
-                # Get non-zero values
-                non_zeros = data[data > 0].flatten()
-                
-                if len(non_zeros) > 0:
-                    # If we have too many samples, subsample
-                    if len(samples) < sample_size:
-                        take = min(len(non_zeros), sample_size - len(samples))
-                        samples.extend(non_zeros[:take])
-                    else:
-                        # Reservoir full, maybe replace? 
-                        # For simplicity in this script, we just stop after filling the buffer 
-                        # with data from random tiles.
-                        break
-        except Exception as e:
-            logger.warning(f"Failed to sample {nc}: {e}")
-
-    if samples:
-        global_max = float(np.percentile(samples, 98))
-        logger.info(f"Robust Max (98th percentile): {global_max} (from {len(samples)} samples)")
-    else:
-        global_max = 1.0
-        logger.warning("No data found to calculate max. Defaulting to 1.0")
-    
     # 2. Define Colormap (Crameri Oslo, L=20% start)
     # oslo goes Black -> Blue -> White
     # Start at L=20 (approx 20% of 256 = 51)
@@ -478,7 +498,7 @@ def run_post_processing(run_dir, base_zoom, scheduler, clean_intermediate, cogs,
     process_zoom_level(run_dir, base_zoom, cmap, global_max, client)
     
     # 4. Generate Pyramid
-    generate_pyramid(run_dir, base_zoom, cmap, global_max, client)
+    generate_pyramid(run_dir, base_zoom, cmap, client)
     
     # 5. Export COGs
     if cogs:
