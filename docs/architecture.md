@@ -64,6 +64,21 @@ Estimates based on a full run of the US dataset, accounting for **data sparsity*
 - **GPKG Performance**: Reading from GeoPackage is significantly slower than Parquet. Always preprocess to Parquet first.
 - **Edge Artifacts**: Without the global max normalization, tiles would have individual color scales, creating visible "checkerboard" artifacts at tile boundaries.
 
+## Visuals
+
+### Map Details
+High-resolution renderings showing vessel track density.
+
+![Map Detail 1](../docs/images/map_detail_1.png)
+![Map Detail 2](../docs/images/map_detail_2.png)
+
+### Colormaps
+Custom transparent colormaps used for visualization.
+
+| Electric Blue | Brown / Gold |
+|---|---|
+| ![Colormap 1](../docs/images/colormap_1.png) | ![Colormap 2](../docs/images/colormap_2.png) |
+
 ## Future Improvements
 - **Dynamic Tiling**: Serve tiles dynamically from the raw data using a tile server (e.g., TiPpecanoe or a custom Python server) instead of pre-rendering everything.
 - **Vector Tiles**: For lower zoom levels, vector tiles (MVT) might offer better interactivity than raster PNGs.

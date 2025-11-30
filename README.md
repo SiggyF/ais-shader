@@ -2,7 +2,7 @@
 
 A scalable Python pipeline to visualize AIS vessel tracks from large Parquet datasets (e.g., 11GB) as tiled, high-quality maps.
 
-![AIS Vessel Tracks Visualization](docs/screenshot.png)
+![AIS Vessel Tracks Visualization](docs/images/overview.png)
 
 ## Features
 
@@ -14,6 +14,21 @@ A scalable Python pipeline to visualize AIS vessel tracks from large Parquet dat
 - **Dual Formats**: Exports both **PNG** (for display) and **Cloud Optimized GeoTIFF (COG)** (for analysis).
 - **Anti-Aliasing**: Renders tracks as smooth lines (`LineString`) with anti-aliasing.
 - **Configurable**: All settings (bbox, zoom, palette) are defined in `config.toml`.
+
+## Visuals
+
+### Map Details
+High-resolution renderings showing vessel track density.
+
+![Map Detail 1](docs/images/map_detail_1.png)
+![Map Detail 2](docs/images/map_detail_2.png)
+
+### Colormaps
+Custom transparent colormaps used for visualization.
+
+| Electric Blue | Brown / Gold |
+|---|---|
+| ![Colormap 1](docs/images/colormap_1.png) | ![Colormap 2](docs/images/colormap_2.png) |
 
 ## Troubleshooting Data
 
