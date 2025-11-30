@@ -22,6 +22,7 @@ dependencies = [
     "morecantile>=7.0.0",
     "rio-cogeo>=7.0.0",
     "netcdf4>=1.7.3",
+    "zarr>=2.18.0",
 ]
 
 [project.scripts]
