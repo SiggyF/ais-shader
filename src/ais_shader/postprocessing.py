@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import dask
+import cmcrameri.cm as crameri
 import datashader.transfer_functions as tf
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -84,6 +85,10 @@ def render_tile(nc_path, output_path, cmap, global_max, log_scale=True):
     
     # Apply colormap
     rgba = cmap(norm_data)
+    
+    # Explicitly set alpha to 0 where data is 0
+    # This ensures empty pixels are fully transparent, even if min_alpha > 0
+    rgba[data == 0, 3] = 0.0
     
     # Convert to 0-255 uint8
     img_data = (rgba * 255).astype(np.uint8)
@@ -456,25 +461,18 @@ def run_post_processing(run_dir, base_zoom, scheduler, clean_intermediate, cogs,
         logger.warning("No data found to calculate max. Defaulting to 1.0")
     
     # 2. Define Colormap (Crameri Oslo, L=20% start)
-    try:
-        import cmcrameri.cm as crameri
-        # oslo goes Black -> Blue -> White
-        # Start at L=20 (approx 20% of 256 = 51)
-        subset_colors = crameri.oslo(np.linspace(0.2, 1.0, 256))
-        base_cmap = mcolors.LinearSegmentedColormap.from_list("crameri_oslo_subset", subset_colors)
-        
-        # Apply alpha gradient
-        n_colors = 256
-        colors_array = base_cmap(np.linspace(0, 1, n_colors))
-        alphas = np.linspace(0.2, 1.0, n_colors) # min_alpha=0.2
-        colors_array[:, 3] = alphas
-        cmap = mcolors.ListedColormap(colors_array)
-        logger.info("Using Crameri Oslo colormap (L=20% start)")
-        
-    except ImportError:
-        logger.warning("cmcrameri not found. Falling back to default electric blue.")
-        colors = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
-        cmap = create_transparent_cmap(colors, min_alpha=0.2, max_alpha=1.0)
+    # oslo goes Black -> Blue -> White
+    # Start at L=20 (approx 20% of 256 = 51)
+    subset_colors = crameri.oslo(np.linspace(0.2, 1.0, 256))
+    base_cmap = mcolors.LinearSegmentedColormap.from_list("crameri_oslo_subset", subset_colors)
+    
+    # Apply alpha gradient
+    n_colors = 256
+    colors_array = base_cmap(np.linspace(0, 1, n_colors))
+    alphas = np.linspace(0.2, 1.0, n_colors) # min_alpha=0.2
+    colors_array[:, 3] = alphas
+    cmap = mcolors.ListedColormap(colors_array)
+    logger.info("Using Crameri Oslo colormap (L=20% start)")
 
     # 3. Render Base Zoom
     process_zoom_level(run_dir, base_zoom, cmap, global_max, client)
