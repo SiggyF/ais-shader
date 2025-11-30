@@ -1,20 +1,22 @@
 import logging
 import sys
-from pathlib import Path
+import tomllib
 from collections import defaultdict
-import xarray as xr
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
+import click
+import dask
+import datashader.transfer_functions as tf
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import rioxarray
-from tqdm import tqdm
-import datashader.transfer_functions as tf
-from datashader.colors import viridis
+import xarray as xr
 from dask.distributed import Client, as_completed
-import dask
-from concurrent.futures import ProcessPoolExecutor
-import click
+from datashader.colors import viridis
 from PIL import Image
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(
@@ -129,7 +131,7 @@ def process_zoom_level(run_dir, zoom, cmap, global_max, client):
     
     futures = []
     for nc in ncs:
-        parts = nc.name.split("_")
+        parts = nc.stem.split("_")
         x, y = parts[2], parts[3]
         png_path = png_dir / str(zoom) / x / f"{y}.png"
         futures.append(client.submit(render_tile, nc, png_path, cmap, global_max))
@@ -151,7 +153,7 @@ def generate_pyramid(run_dir, base_zoom, cmap, global_max, client):
         
         parents = defaultdict(list)
         for child in child_ncs:
-            parts = child.name.split("_")
+            parts = child.stem.split("_")
             # parts[1] is the zoom level, parts[2] is x, parts[3] is y
             cx, cy = int(parts[2]), int(parts[3])
             px, py = cx // 2, cy // 2
@@ -249,7 +251,7 @@ def aggregate_children(parent_key, children):
     
     # Fill Parent
     for child_path, da_child in child_ds_list:
-        parts = child_path.name.split("_")
+        parts = child_path.stem.split("_")
         cx, cy = int(parts[2]), int(parts[3])
         
         # Determine quadrant
@@ -355,11 +357,30 @@ def export_single_cog(nc_path, tiff_dir):
             
             if not da.rio.crs:
                 da.rio.write_crs("EPSG:3857", inplace=True)
-                
-            tiff_path = tiff_dir / nc_path.name.replace(".nc", ".tif")
+            
+            descriptions = None
+            # The first dimension is now the band/category dimension
+            first_dim = da.dims[0]
+            if first_dim not in ('y', 'x') and len(da.coords[first_dim]) > 1:
+                 cats = da.coords[first_dim].values
+                 descriptions = [str(cat) for cat in cats]
+            
+            tiff_path = tiff_dir / f"{nc_path.stem}.tif"
             
             # Save as COG
+            # Save as COG
             da.rio.to_raster(tiff_path, tiled=True, compress="DEFLATE")
+            
+            # Update band descriptions using rasterio directly
+            if descriptions:
+                import rasterio
+                try:
+                    with rasterio.open(tiff_path, "r+") as dst:
+                        for i, desc in enumerate(descriptions, start=1):
+                            dst.set_band_description(i, desc)
+                except Exception as e:
+                    logger.warning(f"Failed to update band descriptions for {tiff_path}: {e}")
+            
             return tiff_path
             
     except Exception as e:
@@ -374,11 +395,29 @@ def export_single_cog(nc_path, tiff_dir):
 @click.option("--scheduler", type=str, default=None, help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786).")
 @click.option("--clean-intermediate", is_flag=True, help="Delete intermediate NetCDF files (Zoom 0 to base-zoom-1) after processing.")
 @click.option("--cogs", is_flag=True, help="Export Cloud Optimized GeoTIFFs for the base zoom level.")
-def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
+@click.option("--config-file", type=click.Path(exists=True, path_type=Path), default=Path("config.toml"), help="Path to the configuration file.")
+def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs, config_file):
     """
     Post-process NetCDFs to PNGs with global scaling and transparency.
     """
     # Initialize Dask Client
+    dask_config = {
+        "distributed.scheduler.allowed-failures": 0,
+    }
+
+    # Load Config for resources if available
+    if config_file.exists():
+        with open(config_file, "rb") as f:
+            config = tomllib.load(f)
+        
+        if "resources" in config:
+            res = config["resources"]
+            if "memory_target" in res: dask_config["distributed.worker.memory.target"] = res["memory_target"]
+            if "memory_spill" in res: dask_config["distributed.worker.memory.spill"] = res["memory_spill"]
+            if "memory_pause" in res: dask_config["distributed.worker.memory.pause"] = res["memory_pause"]
+            dask_config["distributed.worker.memory.terminate"] = False
+
+    dask.config.set(dask_config)
     
     if scheduler:
         client = Client(scheduler)
@@ -416,9 +455,9 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
             
             dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
             if dims_to_sum:
-                val = da.sum(dim=dims_to_sum).max().item()
+                val = da.sum(dim=dims_to_sum).max().compute().item()
             else:
-                val = da.max().item()
+                val = da.max().compute().item()
                 
             if val > global_max:
                 global_max = val
@@ -444,6 +483,7 @@ def main(run_dir, base_zoom, scheduler, clean_intermediate, cogs):
     if clean_intermediate:
         logger.info("Cleaning up intermediate Zarr files...")
         import shutil
+
         # Delete all .zarr files where zoom < base_zoom
         for nc in nc_dir.glob("tile_*.zarr"):
             try:

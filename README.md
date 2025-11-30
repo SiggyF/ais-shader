@@ -109,6 +109,27 @@ This script will:
 2.  Render **PNGs** using a custom "Electric Blue" colormap with transparency for low counts.
 3.  Generate **Pyramid** levels (Zoom 0-6) by aggregating the base zoom data.
 
+### 5. Visualization & Testing
+
+#### Web Server (XYZ Tiles)
+To view the generated PNG tiles in a browser or QGIS as an XYZ layer:
+
+1.  Start a simple HTTP server in the `rendered/run_.../png` directory:
+    ```bash
+    cd rendered/run_YYYYMMDD_HHMMSS/png
+    python -m http.server 8000
+    ```
+2.  Open QGIS and add a new **XYZ Tiles** connection:
+    -   **URL**: `http://localhost:8000/{z}/{x}/{y}.png`
+    -   **Name**: AIS Tracks Local
+
+#### QGIS (Cloud Optimized GeoTIFFs)
+To view the raw data or high-resolution exports:
+
+1.  Open QGIS.
+2.  Drag and drop the `.tif` files from `rendered/run_.../tiff/` directly into the map canvas.
+3.  Since they are COGs, QGIS will handle them efficiently. You can style them using "Singleband pseudocolor".
+
 ## Pipeline Overview
 
 1.  **Data Loading**: Reads the preprocessed GeoParquet file using `dask-geopandas`.

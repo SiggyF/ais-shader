@@ -1,23 +1,27 @@
+import gc
 import logging
 import sys
+import threading
 import time
+import tomllib
 from datetime import datetime
 from pathlib import Path
-import click
-import tomllib
-import dask
-from dask.distributed import Client
-import dask.dataframe as dd
 
-# Import from src modules
-from src.data_loader import load_and_process_data
+import click
+import dask
+import dask.dataframe as dd
 # Local definition to avoid Dask deserialization issues
 import datashader as ds
 import morecantile
+import psutil
 import rioxarray
 import xarray as xr
+from dask.distributed import Client, get_client, wait
 from rasterio.transform import from_bounds
-from dask.distributed import get_client, wait
+
+# Import from src modules
+from src.data_loader import load_and_process_data
+
 
 def render_tile_task(gdf_local, tile, zarr_dir, config):
     """
@@ -87,20 +91,35 @@ def render_tile_task(gdf_local, tile, zarr_dir, config):
         if isinstance(agg, xr.Dataset):
             total_sum = float(da.sum())
             max_val = float(da.max())
-            print(f"Tile {tile} stats: sum={total_sum}, max={max_val}, categories={len(agg.data_vars)}")
+            logger.info(f"Tile {tile} stats: sum={total_sum}, max={max_val}, categories={len(agg.data_vars)}")
         else:
             agg_sum = float(agg.sum())
             agg_max = float(agg.max())
-            print(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
+            logger.info(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
 
-        print(f"Saved Zarr for tile {tile}")
+        logger.info(f"Saved Zarr for tile {tile}")
         
     except Exception as e:
         import traceback
-        print(f"Error processing tile {tile}: {e}")
-        traceback.print_exc()
+        logger.error(f"Error processing tile {tile}: {e}")
+        logger.error(traceback.format_exc())
         raise e
 
+
+def monitor_resources(interval=5, stop_event=None):
+    """
+    Monitor system resources in a background thread.
+    """
+    while not stop_event.is_set():
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        
+        logger.info(f"Resource Monitor - CPU: {cpu_percent}%, Memory: {memory.percent}% (Used: {memory.used / (1024**3):.2f} GB)")
+        
+        if memory.percent > 90:
+            logger.warning("High memory usage detected!")
+            
+        time.sleep(interval)
 
 def render_tiles(coords_ddf, output_dir: Path, config: dict):
     """
@@ -130,7 +149,7 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
     
     # Process tiles in batches to manage memory
     total_tiles = len(tiles)
-    batch_size = 20
+    batch_size = config["visualization"].get("batch_size", 20)
     logger.info(f"Found {total_tiles} tiles to render. Processing in batches of {batch_size}...")
     
     for i in range(0, total_tiles, batch_size):
@@ -171,6 +190,8 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
             
             # Explicitly release futures to free memory
             del futures
+            gc.collect()
+            time.sleep(1) # Let the scheduler settle
             
     logger.info("All tasks completed.")
 
@@ -225,7 +246,19 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         logger.info(f"Using input file from config: {input_file}")
 
     # Initialize Dask Client
-    dask.config.set({"distributed.scheduler.allowed-failures": 0})
+    dask_config = {
+        "distributed.scheduler.allowed-failures": 0,
+    }
+    
+    # Apply resource limits from config
+    if "resources" in config:
+        res = config["resources"]
+        if "memory_target" in res: dask_config["distributed.worker.memory.target"] = res["memory_target"]
+        if "memory_spill" in res: dask_config["distributed.worker.memory.spill"] = res["memory_spill"]
+        if "memory_pause" in res: dask_config["distributed.worker.memory.pause"] = res["memory_pause"]
+        dask_config["distributed.worker.memory.terminate"] = False # Avoid killing workers on laptop
+
+    dask.config.set(dask_config)
     
     if scheduler:
         logger.info(f"Connecting to Dask scheduler at {scheduler}...")
@@ -255,6 +288,11 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         json.dump(metadata, f, indent=2)
     logger.info("Saved metadata.json")
 
+    # Start Resource Monitor
+    stop_monitor = threading.Event()
+    monitor_thread = threading.Thread(target=monitor_resources, args=(5, stop_monitor))
+    monitor_thread.start()
+
     try:
         # Load Data
         # Removed 'partitions' parameter as per the instruction's implied change
@@ -271,6 +309,8 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         traceback.print_exc()
         sys.exit(1).close()
     finally:
+        stop_monitor.set()
+        monitor_thread.join()
         client.close()
 
 

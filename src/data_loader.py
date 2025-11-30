@@ -1,9 +1,10 @@
 import logging
+from pathlib import Path
+
 import dask.dataframe as dd
 import dask_geopandas
 import geopandas as gpd
 import pandas as pd
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

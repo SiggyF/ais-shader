@@ -1,0 +1,19 @@
+[data]
+input_file = "/Users/baart_f/data/ais/AISVesselTracks2024_processed.parquet"
+
+[visualization]
+zoom = 7
+tile_size = 1024
+line_width = 0
+category_column = "VesselGroup"
+# Small BBox for testing (NYC area)
+bbox = [-74.0, 40.0, -73.0, 41.0]
+batch_size = 5
+
+[resources]
+memory_target = 0.6
+memory_spill = 0.7
+memory_pause = 0.8
+
+[style]
+colormap = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
