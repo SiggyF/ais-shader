@@ -15,30 +15,18 @@ from datashader.colors import viridis
 
 logger = logging.getLogger(__name__)
 
-def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config: dict):
+def render_tile_task(gdf_local, tile, zarr_dir, config):
     """
-    Process a single tile: filter, compute, render, and save.
+    Render a single tile from a computed GeoDataFrame.
+    This runs on a worker.
     """
-    tms = morecantile.tms.get("WebMercatorQuad")
-    
-    # Check if output already exists
-    zarr_path = zarr_dir / f"tile_{tile.z}_{tile.x}_{tile.y}.zarr"
-    if zarr_path.exists():
-        logger.info(f"Tile {tile} already exists. Skipping.")
+    if len(gdf_local) == 0:
+        # logger.info(f"Tile {tile} is empty. Skipping.")
         return
 
+    tms = morecantile.tms.get("WebMercatorQuad")
     bbox = tms.xy_bounds(tile)
     
-    # Filter data for this tile using spatial index
-    subset = coords_ddf.cx[bbox.left:bbox.right, bbox.bottom:bbox.top]
-    
-    # Compute to local GeoDataFrame
-    gdf_local = subset.compute()
-
-    if len(gdf_local) == 0:
-        logger.info(f"Tile {tile} is empty. Skipping.")
-        return
-
     # Define canvas
     tile_size = config["visualization"]["tile_size"]
     cvs = ds.Canvas(
@@ -53,8 +41,6 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     category_column = config["visualization"].get("category_column")
     
     if category_column:
-        # Categorical aggregation (count per category)
-        # Ensure column is categorical for Datashader
         if category_column in gdf_local.columns:
             gdf_local[category_column] = gdf_local[category_column].astype("category")
             agg = cvs.line(gdf_local, geometry='geometry', agg=ds.by(category_column, ds.count()))
@@ -66,17 +52,15 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     else:
         agg = cvs.line(gdf_local, geometry='geometry', line_width=line_width)
 
-    # --- Save GeoTIFF (Counts) ---
+    # --- Save Zarr (Counts) ---
     # Create transform
     transform = from_bounds(bbox.left, bbox.bottom, bbox.right, bbox.top, tile_size, tile_size)
     
     # Prepare DataArray for saving
     if isinstance(agg, xr.Dataset):
-        # Multi-band (Categorical)
         da = agg.to_array(dim="band")
         da = da.fillna(0).astype("int32")
     else:
-        # Single band
         da = agg.fillna(0).astype("int32")
         da = da.expand_dims(dim={'band': 1})
 
@@ -87,23 +71,16 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
     # Save as Zarr
     zarr_path = zarr_dir / f"tile_{tile.z}_{tile.x}_{tile.y}.zarr"
     
-    # Enable compression (Blosc is default and good)
-    # Ensure variable name is set
     if not da.name:
         da.name = "counts"
     
-    # Use int32
-    # Zarr handles compression automatically, but we can specify compressor if needed.
-    # Default is usually Blosc/LZ4 which is fast.
-    # We explicitly define encoding to avoid compressing spatial_ref which causes int64 issues
-    # We disable compression for spatial_ref, and let the data variable use default (Blosc)
+    # Encoding: disable compression for spatial_ref
     encoding = {"spatial_ref": {"compressor": None}}
     
     da.to_zarr(zarr_path, mode="w", consolidated=True, encoding=encoding)
     
     # Logging stats
     if isinstance(agg, xr.Dataset):
-        # Sum across all categories
         total_sum = float(da.sum())
         max_val = float(da.max())
         logger.info(f"Tile {tile} stats: sum={total_sum}, max={max_val}, categories={len(agg.data_vars)}")
@@ -113,16 +90,21 @@ def process_single_tile(tile, coords_ddf, png_dir: Path, zarr_dir: Path, config:
         logger.info(f"Tile {tile} stats: sum={agg_sum}, max={agg_max}")
 
     logger.info(f"Saved Zarr for tile {tile}")
-    
-
-
-
 
 
 def render_tiles(coords_ddf, output_dir: Path, config: dict):
     """
-    Render tiles for the US using Datashader and save as PNG and COG.
+    Render tiles for the US using Datashader and save as Zarr.
+    Submits all tasks to Dask at once.
     """
+    from dask.distributed import get_client, wait
+    
+    try:
+        client = get_client()
+    except ValueError:
+        logger.error("No Dask client found. Please start a client before calling render_tiles.")
+        return
+
     # Define TileMatrixSet (WebMercatorQuad)
     tms = morecantile.tms.get("WebMercatorQuad")
     
@@ -135,22 +117,33 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
     tiles = list(tms.tiles(*us_bbox, zooms=[zoom]))
     
     # Create subdirectories
-    tiff_dir = output_dir / "tiff"
-    tiff_dir.mkdir(parents=True, exist_ok=True)
-    
     zarr_dir = output_dir / "zarr"
     zarr_dir.mkdir(parents=True, exist_ok=True)
     
-    png_dir = output_dir / "png"
-    png_dir.mkdir(parents=True, exist_ok=True)
-    
     # Process tiles
-    # We can parallelize this, but Dask is already parallelizing the aggregation.
-    # So we iterate and compute.
-    
     total_tiles = len(tiles)
-    logger.info(f"Found {total_tiles} tiles to render.")
+    logger.info(f"Found {total_tiles} tiles to render. Submitting tasks...")
     
-    for i, tile in enumerate(tiles):
-        logger.info(f"Processing Tile: {tile}...")
-        process_single_tile(tile, coords_ddf, png_dir, zarr_dir, config)
+    futures = []
+    for tile in tiles:
+        # Check if output already exists
+        zarr_path = zarr_dir / f"tile_{tile.z}_{tile.x}_{tile.y}.zarr"
+        if zarr_path.exists():
+            # logger.info(f"Tile {tile} already exists. Skipping.")
+            continue
+
+        bbox = tms.xy_bounds(tile)
+        
+        # Filter data for this tile using spatial index (Lazy)
+        subset = coords_ddf.cx[bbox.left:bbox.right, bbox.bottom:bbox.top]
+        
+        # Submit the compute task (returns a Future to the pandas DataFrame)
+        future_gdf = client.compute(subset)
+        
+        # Submit the rendering task, dependent on future_gdf
+        future_render = client.submit(render_tile_task, future_gdf, tile, zarr_dir, config)
+        futures.append(future_render)
+    
+    logger.info(f"Submitted {len(futures)} tasks. Waiting for completion...")
+    wait(futures)
+    logger.info("All tasks completed.")
