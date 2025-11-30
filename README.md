@@ -196,9 +196,9 @@ rendered/
 
 ### Storage Estimates
 
-With `zlib` compression (level 5) and `int32` data types:
+Estimates based on **Marine Cadastre** AIS data (https://hub.marinecadastre.gov/), using `zlib` compression (level 5) and `int32` data types:
 *   **Zoom 7**: ~93 MB (143 tiles)
-*   **Zoom 10 (Estimated)**: ~6 GB (assuming ~9000 tiles)
+*   **Zoom 10**: ~5.7 GB (12,525 tiles)
 
 
 
