@@ -8,8 +8,8 @@ A scalable Python pipeline to visualize AIS vessel tracks from large Parquet dat
 
 - **Scalable Processing**: Built with [Dask](https://dask.org/) and [Datashader](https://datashader.org/) to handle datasets larger than memory.
 - **Seamless Tiling**: Calculates a global maximum across all tiles to ensure consistent color scaling and eliminate edge artifacts.
-- **Smart Transparency**: Custom "Electric Blue" colormap with gradual alpha transparency for low-density areas.
-- **Full Pyramid**: Generates Zoom levels 0-7, allowing for smooth zooming from global view to details.
+- **Smart Transparency**: Automatically adapts **any colormap** (e.g., Crameri Oslo) to be gradually transparent in low-density areas.
+- **Flexible Pyramid**: Generates any range of zoom levels (e.g., 0-14), allowing for smooth zooming from global view to meter-scale details. For example, processing Zoom 14 on 200 nodes takes ~1.25 hours and produces ~56 GB of **compressed** data. This represents a total image size of approximately **16.7 million x 16.7 million pixels** (280 Terapixels).
 - **Robust Format**: Uses Zarr for intermediate storage to handle multi-dimensional categorical data efficiently.
 - **Dual Formats**: Exports both **PNG** (for display) and **Cloud Optimized GeoTIFF (COG)** (for analysis).
 - **Anti-Aliasing**: Renders tracks as smooth lines (`LineString`) with anti-aliasing.
@@ -18,16 +18,18 @@ A scalable Python pipeline to visualize AIS vessel tracks from large Parquet dat
 ## Visuals
 
 ### Map Details
-High-resolution renderings showing vessel track density.
+High-resolution, anti-aliased renderings showing vessel track density with sharp contrast at all zoom levels.
 
 ![Map Detail 1](docs/images/map_detail_1.png)
 ![Map Detail 2](docs/images/map_detail_2.png)
 ![Map Detail 3](docs/images/map_detail_3.png)
 
 ### Colormaps
-Custom transparent colormaps used for visualization.
+Custom transparent colormaps used for visualization. Any matplotlib or crameri colormap can be used.
 
-| Electric Blue | Brown / Gold |
+*Crameri colormaps source: [Crameri, F. (2018). Scientific colour-maps. Zenodo. doi:10.5281/zenodo.1243862](https://doi.org/10.5281/zenodo.1243862)*
+
+| Crameri Oslo (L=20%) | Brown / Gold |
 |---|---|
 | ![Colormap 1](docs/images/colormap_1.png) | ![Colormap 2](docs/images/colormap_2.png) |
 
@@ -84,7 +86,7 @@ line_width = 0    # Aliased lines (values are integer counts)
 bbox = [-125.0, 24.0, -66.0, 49.0]  # US Bounds
 
 [style]
-colormap = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
+colormap = "oslo"
 ```
 
 **Note on GeoTIFF Values:**

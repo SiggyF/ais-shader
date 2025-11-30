@@ -76,7 +76,7 @@ High-resolution renderings showing vessel track density.
 ### Colormaps
 Custom transparent colormaps used for visualization.
 
-| Electric Blue | Brown / Gold |
+| Crameri Oslo (L=20%) | Brown / Gold |
 |---|---|
 | ![Colormap 1](../docs/images/colormap_1.png) | ![Colormap 2](../docs/images/colormap_2.png) |
 
