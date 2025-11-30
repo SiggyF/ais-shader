@@ -2,6 +2,8 @@
 
 A scalable Python pipeline to visualize AIS vessel tracks from large Parquet datasets (e.g., 11GB) as tiled, high-quality maps.
 
+![AIS Vessel Tracks Visualization](docs/screenshot.png)
+
 ## Features
 
 - **Scalable Processing**: Built with [Dask](https://dask.org/) and [Datashader](https://datashader.org/) to handle datasets larger than memory.
