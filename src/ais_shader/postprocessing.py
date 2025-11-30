@@ -388,47 +388,94 @@ def run_post_processing(run_dir, base_zoom, scheduler, clean_intermediate, cogs,
 
     nc_dir = run_dir / "zarr"
     
-    # 1. Calculate Global Max
-    logger.info("Calculating global max...")
-    global_max = 0
+    # 1. Calculate Robust Max (98th Percentile)
+    logger.info("Calculating robust max (98th percentile)...")
     ncs = list(nc_dir.glob(f"tile_{base_zoom}_*.zarr"))
     
-    for nc in tqdm(ncs, desc="Scanning tiles"):
-        with xr.open_zarr(nc) as ds:
-            # Find the correct data variable
-            var_name = None
-            if "counts" in ds.data_vars:
-                var_name = "counts"
-            elif "__xarray_dataarray_variable__" in ds.data_vars:
-                var_name = "__xarray_dataarray_variable__"
-            else:
-                # Fallback: pick first non-spatial_ref variable
-                for v in ds.data_vars:
-                    if v != "spatial_ref":
-                        var_name = v
-                        break
-            
-            if not var_name:
-                continue
+    # Reservoir sampling to estimate percentile
+    sample_size = 1_000_000
+    samples = []
+    total_samples = 0
+    
+    import random
+    random.shuffle(ncs) # Shuffle to get random sample of tiles
+    
+    # Limit number of tiles to scan to avoid long startup if dataset is huge
+    # But for accurate percentile we should try to see enough.
+    # Let's scan up to 100 tiles or all if less.
+    tiles_to_scan = ncs[:min(len(ncs), 200)]
+    
+    for nc in tqdm(tiles_to_scan, desc="Sampling tiles"):
+        try:
+            with xr.open_zarr(nc) as ds:
+                # Find the correct data variable
+                var_name = None
+                if "counts" in ds.data_vars:
+                    var_name = "counts"
+                elif "__xarray_dataarray_variable__" in ds.data_vars:
+                    var_name = "__xarray_dataarray_variable__"
+                else:
+                    for v in ds.data_vars:
+                        if v != "spatial_ref":
+                            var_name = v
+                            break
+                
+                if not var_name:
+                    continue
 
-            da = ds[var_name]
-            
-            dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
-            if dims_to_sum:
-                val = da.sum(dim=dims_to_sum).max().compute().item()
-            else:
-                val = da.max().compute().item()
+                da = ds[var_name]
                 
-            if val > global_max:
-                global_max = val
+                # Sum extra dims
+                dims_to_sum = [d for d in da.dims if d not in ('y', 'x')]
+                if dims_to_sum:
+                    data = da.sum(dim=dims_to_sum).values
+                else:
+                    data = da.values
                 
-    logger.info(f"Global Max: {global_max}")
+                # Get non-zero values
+                non_zeros = data[data > 0].flatten()
+                
+                if len(non_zeros) > 0:
+                    # If we have too many samples, subsample
+                    if len(samples) < sample_size:
+                        take = min(len(non_zeros), sample_size - len(samples))
+                        samples.extend(non_zeros[:take])
+                    else:
+                        # Reservoir full, maybe replace? 
+                        # For simplicity in this script, we just stop after filling the buffer 
+                        # with data from random tiles.
+                        break
+        except Exception as e:
+            logger.warning(f"Failed to sample {nc}: {e}")
+
+    if samples:
+        global_max = float(np.percentile(samples, 98))
+        logger.info(f"Robust Max (98th percentile): {global_max} (from {len(samples)} samples)")
+    else:
+        global_max = 1.0
+        logger.warning("No data found to calculate max. Defaulting to 1.0")
     
-    # 2. Define Colormap (Electric Blue with Alpha)
-    # Dark Blue -> Cyan -> White
-    colors = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
-    cmap = create_transparent_cmap(colors, min_alpha=0.0, max_alpha=1.0)
-    
+    # 2. Define Colormap (Crameri Oslo, L=20% start)
+    try:
+        import cmcrameri.cm as crameri
+        # oslo goes Black -> Blue -> White
+        # Start at L=20 (approx 20% of 256 = 51)
+        subset_colors = crameri.oslo(np.linspace(0.2, 1.0, 256))
+        base_cmap = mcolors.LinearSegmentedColormap.from_list("crameri_oslo_subset", subset_colors)
+        
+        # Apply alpha gradient
+        n_colors = 256
+        colors_array = base_cmap(np.linspace(0, 1, n_colors))
+        alphas = np.linspace(0.2, 1.0, n_colors) # min_alpha=0.2
+        colors_array[:, 3] = alphas
+        cmap = mcolors.ListedColormap(colors_array)
+        logger.info("Using Crameri Oslo colormap (L=20% start)")
+        
+    except ImportError:
+        logger.warning("cmcrameri not found. Falling back to default electric blue.")
+        colors = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
+        cmap = create_transparent_cmap(colors, min_alpha=0.2, max_alpha=1.0)
+
     # 3. Render Base Zoom
     process_zoom_level(run_dir, base_zoom, cmap, global_max, client)
     

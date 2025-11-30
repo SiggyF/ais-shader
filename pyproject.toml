@@ -23,6 +23,7 @@ dependencies = [
     "rio-cogeo>=7.0.0",
     "netcdf4>=1.7.3",
     "zarr>=2.18.0",
+    "cmcrameri>=1.9",
 ]
 
 [project.scripts]

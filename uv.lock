@@ -19,6 +19,7 @@ dependencies = [
     { name = "bokeh" },
     { name = "cartopy" },
     { name = "click" },
+    { name = "cmcrameri" },
     { name = "colorcet" },
     { name = "dask", extra = ["distributed"] },
     { name = "dask-geopandas" },
@@ -41,6 +42,7 @@ requires-dist = [
     { name = "bokeh", specifier = ">=3.8.1" },
     { name = "cartopy", specifier = ">=0.25.0" },
     { name = "click", specifier = ">=8.3.1" },
+    { name = "cmcrameri", specifier = ">=1.9" },
     { name = "colorcet", specifier = ">=3.1.0" },
     { name = "dask", extras = ["distributed"], specifier = ">=2025.11.0" },
     { name = "dask-geopandas", specifier = ">=0.5.0" },
@@ -245,6 +247,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
+]
+
+[[package]]
+name = "cmcrameri"
+version = "1.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/18/61ac7ea74f7c4d82ce3a1d49e9a26492b0df5a8792025066efcb318a88e2/cmcrameri-1.9.tar.gz", hash = "sha256:56faf9b7f53eb03fed450137bec7dc25c1854929d7b841b9c75616fc2c357640", size = 260122, upload-time = "2024-04-22T08:23:54.5Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/a2/4c88f17ee50af5093978c4d989936883f959d7d81e1e2fa093863b080c1c/cmcrameri-1.9-py3-none-any.whl", hash = "sha256:daefca10cc405f437ad292bad52f704c2ba8ae692b3e100da8c25f641997e337", size = 277448, upload-time = "2024-04-22T08:23:52.894Z" },
 ]
 
 [[package]]
