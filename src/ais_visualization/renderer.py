@@ -193,7 +193,7 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
             
     logger.info("All tasks completed.")
 
-def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
+def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_file: Path, resume_dir: Path = None):
     """
     Main entry point for rendering.
     """
@@ -234,11 +234,18 @@ def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_fil
         
     logger.info(f"Dask Dashboard link: {client.dashboard_link}")
 
-    # Create run directory with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output_dir / f"run_{timestamp}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Output will be saved to: {run_dir}")
+    # Create or use existing run directory
+    if resume_dir:
+        run_dir = resume_dir
+        if not run_dir.exists():
+            raise ValueError(f"Resume directory does not exist: {run_dir}")
+        logger.info(f"Resuming run in: {run_dir}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = output_dir / f"run_{timestamp}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Output will be saved to: {run_dir}")
 
     # Save metadata
     import json

@@ -49,11 +49,17 @@ def cli():
     default=None,
     help="Path to input Parquet file (overrides config.toml).",
 )
-def render(config_file, output_dir, scheduler, input_file):
+@click.option(
+    "--resume-dir",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a run directory to resume.",
+)
+def render(config_file, output_dir, scheduler, input_file, resume_dir):
     """
     Render tiles from AIS data using Datashader.
     """
-    run_rendering(config_file, output_dir, scheduler, input_file)
+    run_rendering(config_file, output_dir, scheduler, input_file, resume_dir)
 
 @cli.command()
 @click.option("--run-dir", type=click.Path(exists=True, path_type=Path), required=True, help="Path to the run directory.")

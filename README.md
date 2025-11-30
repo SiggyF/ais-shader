@@ -10,7 +10,7 @@ A scalable Python pipeline to visualize AIS vessel tracks from large Parquet dat
 - **Seamless Tiling**: Calculates a global maximum across all tiles to ensure consistent color scaling and eliminate edge artifacts.
 - **Smart Transparency**: Custom "Electric Blue" colormap with gradual alpha transparency for low-density areas.
 - **Full Pyramid**: Generates Zoom levels 0-7, allowing for smooth zooming from global view to details.
-- **Robust Format**: Uses NetCDF for intermediate storage to handle multi-dimensional categorical data.
+- **Robust Format**: Uses Zarr for intermediate storage to handle multi-dimensional categorical data efficiently.
 - **Dual Formats**: Exports both **PNG** (for display) and **Cloud Optimized GeoTIFF (COG)** (for analysis).
 - **Anti-Aliasing**: Renders tracks as smooth lines (`LineString`) with anti-aliasing.
 - **Configurable**: All settings (bbox, zoom, palette) are defined in `config.toml`.
@@ -75,35 +75,36 @@ colormap = ["#001133", "#0044aa", "#00aaff", "#00ffff", "#ffffff"]
 - If `line_width = 1` (default for aesthetics), the output GeoTIFFs contain **anti-aliased coverage values** (typically 0.0 to 1.0 per pixel, or accumulated if overlapping).
 - If `line_width = 0`, the output GeoTIFFs contain **raw integer counts** of vessel tracks passing through each pixel. Use this for analysis.
 
-### 3. Rendering
-
 ### 3. Rendering (Phase 1: Raw Data)
 
-Generate raw count data (NetCDF) for the highest zoom level (e.g., Zoom 7). NetCDF is used to support multi-dimensional categorical data.
+Generate raw count data (Zarr) for the highest zoom level (e.g., Zoom 7). Zarr is used to support multi-dimensional categorical data and parallel writes.
 
 ```bash
 # Use input file from config.toml
-uv run shade_tracks.py
+uv run ais-visualization render
 
 # Override input file via CLI
-uv run shade_tracks.py --input-file /path/to/other_dataset.parquet
+uv run ais-visualization render --input-file /path/to/other_dataset.parquet
 
 # Use a shared Dask scheduler (recommended for large datasets)
-uv run shade_tracks.py --scheduler tcp://127.0.0.1:8786
+uv run ais-visualization render --scheduler tcp://127.0.0.1:8786
+
+# Resume an interrupted run
+uv run ais-visualization render --resume-dir rendered/run_YYYYMMDD_HHMMSS
 ```
 
-This will output `.nc` files to `rendered/run_YYYYMMDD_HHMMSS/tiff/`.
+This will output `.zarr` files to `rendered/run_YYYYMMDD_HHMMSS/zarr/`.
 
 ### 4. Post-Processing (Phase 2: Visualization)
 
-Process the raw NetCDF files to generate seamless, transparent PNGs and lower zoom levels (pyramid).
+Process the raw Zarr files to generate seamless, transparent PNGs and lower zoom levels (pyramid).
 
 ```bash
 # Run post-processing on a specific run directory
-uv run post_process.py --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
+uv run ais-visualization post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7
 
-# Optional: Clean up intermediate NetCDF files to save space
-uv run post_process.py --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7 --clean-intermediate
+# Optional: Clean up intermediate Zarr files to save space
+uv run ais-visualization post_process --run-dir rendered/run_YYYYMMDD_HHMMSS --base-zoom 7 --clean-intermediate
 ```
 
 This script will:
@@ -139,6 +140,8 @@ To view the raw data or high-resolution exports:
 
 ## Documentation
 - [Architecture & Design](docs/architecture.md): Details on the technology stack, partitioning strategy, and known issues.
+- **Pipeline Schematic**:
+  ![Pipeline Schematic](docs/pipeline.svg)
 
 ## Pipeline Overview
 
@@ -158,9 +161,9 @@ The pipeline generates the following directory structure:
 rendered/
   run_YYYYMMDD_HHMMSS/
     metadata.json       # Run configuration and details
-    nc/                 # Intermediate NetCDF files (compressed)
-      tile_7_*.nc       # Base zoom tiles
-      tile_6_*.nc       # aggregated tiles
+    zarr/               # Intermediate Zarr files (compressed)
+      tile_7_*.zarr     # Base zoom tiles
+      tile_6_*.zarr     # aggregated tiles
       ...
     png/                # Visualized PNG tiles
       7/                # Zoom 7
@@ -178,10 +181,10 @@ With `zlib` compression (level 5) and `int32` data types:
 
 ### Stability Note
 
-For the pyramid generation step (`post_process.py`), it is recommended to limit concurrency to avoid NetCDF/HDF5 locking issues:
+For the pyramid generation step (`post_process.py`), it is recommended to limit concurrency to avoid excessive memory usage:
 ```bash
 # Run with a single worker for maximum stability
-HDF5_USE_FILE_LOCKING=FALSE uv run dask worker tcp://127.0.0.1:8786 --nworkers 1 --memory-limit 8GB
+uv run dask worker tcp://127.0.0.1:8786 --nworkers 1 --memory-limit 8GB
 ```
 
 ## Project Structure

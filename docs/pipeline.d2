@@ -1,0 +1,83 @@
+direction: right
+
+classes: {
+  process: {
+    style: {
+      stroke-width: 2
+      shadow: true
+      border-radius: 5
+    }
+  }
+  data: {
+    shape: cylinder
+    style: {
+      fill: "#e1f5fe"
+      stroke: "#01579b"
+    }
+  }
+  artifact: {
+    shape: document
+    style: {
+      fill: "#fff3e0"
+      stroke: "#e65100"
+    }
+  }
+}
+
+raw_data: Raw AIS Data (CSV/Parquet) {
+  class: data
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/database.svg
+}
+
+preprocess: Preprocessing {
+  class: process
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/wrench.svg
+  tooltip: "Converts to GeoParquet & Reprojects"
+}
+
+processed_data: Spatially Partitioned GeoParquet {
+  class: data
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/layers.svg
+}
+
+render: Rendering (Dask + Datashader) {
+  class: process
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/map.svg
+  tooltip: "Generates raw counts per tile"
+}
+
+zarr_tiles: Zarr Tiles (Raw Counts) {
+  class: data
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/grid.svg
+}
+
+global_max: Calculate Global Max {
+  class: process
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/sigma.svg
+}
+
+post_process: Post-Processing {
+  class: process
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/image-filter-hdr.svg
+  tooltip: "Applies colormap & generates pyramid"
+}
+
+png_tiles: PNG Tiles (XYZ) {
+  class: artifact
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/image-multiple.svg
+}
+
+cogs: Cloud Optimized GeoTIFFs {
+  class: artifact
+  icon: https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/earth.svg
+}
+
+raw_data -> preprocess: Input
+preprocess -> processed_data: Output
+processed_data -> render: Input
+render -> zarr_tiles: Output
+zarr_tiles -> global_max: Input
+global_max -> post_process: Normalization Factor
+zarr_tiles -> post_process: Input
+post_process -> png_tiles: Output
+post_process -> cogs: Output (Optional)

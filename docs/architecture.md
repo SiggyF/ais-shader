@@ -28,7 +28,7 @@ Processing high-zoom levels (e.g., Zoom 10) involves thousands of tiles.
 - **Explicit GC**: We force garbage collection after batches to prevent memory leaks in long-running processes.
 
 ## Known Issues & Limitations
-- **NetCDF/HDF5 Locking**: When using NetCDF as an intermediate format, concurrent writes can cause locking issues. We recommend `HDF5_USE_FILE_LOCKING=FALSE` or using Zarr (which we migrated to).
+- **Zarr Serialization**: We explicitly disable compression for the `spatial_ref` coordinate to avoid `numpy.int64` serialization warnings in some versions of Xarray/Zarr.
 - **GPKG Performance**: Reading from GeoPackage is significantly slower than Parquet. Always preprocess to Parquet first.
 - **Edge Artifacts**: Without the global max normalization, tiles would have individual color scales, creating visible "checkerboard" artifacts at tile boundaries.
 
