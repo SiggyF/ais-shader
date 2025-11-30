@@ -23,3 +23,9 @@ dependencies = [
     "rio-cogeo>=7.0.0",
     "netcdf4>=1.7.3",
 ]
+
+[project.scripts]
+ais-visualization = "ais_visualization.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ais_visualization"]

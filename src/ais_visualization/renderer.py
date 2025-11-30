@@ -7,10 +7,8 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
-import click
 import dask
 import dask.dataframe as dd
-# Local definition to avoid Dask deserialization issues
 import datashader as ds
 import morecantile
 import psutil
@@ -20,8 +18,9 @@ from dask.distributed import Client, get_client, wait
 from rasterio.transform import from_bounds
 
 # Import from src modules
-from src.data_loader import load_and_process_data
+from .data_loader import load_and_process_data
 
+logger = logging.getLogger(__name__)
 
 def render_tile_task(gdf_local, tile, zarr_dir, config):
     """
@@ -53,7 +52,6 @@ def render_tile_task(gdf_local, tile, zarr_dir, config):
                 gdf_local[category_column] = gdf_local[category_column].astype("category")
                 agg = cvs.line(gdf_local, geometry='geometry', agg=ds.by(category_column, ds.count()))
             else:
-                # logger.warning(f"Category column '{category_column}' not found. Falling back to simple count.")
                 agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
         elif line_width == 0:
             agg = cvs.line(gdf_local, geometry='geometry', agg=ds.count())
@@ -195,42 +193,9 @@ def render_tiles(coords_ddf, output_dir: Path, config: dict):
             
     logger.info("All tasks completed.")
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger(__name__)
-
-@click.command()
-@click.option(
-    "--config-file",
-    type=click.Path(exists=True, path_type=Path),
-    default=Path("config.toml"),
-    help="Path to the configuration file.",
-)
-@click.option(
-    "--output-dir",
-    type=click.Path(path_type=Path),
-    default=Path("rendered"),
-    help="Base directory for output.",
-)
-@click.option(
-    "--scheduler",
-    type=str,
-    default=None,
-    help="Address of the Dask scheduler (e.g., tcp://127.0.0.1:8786). If None, starts a local cluster.",
-)
-@click.option(
-    "--input-file",
-    type=click.Path(exists=True, path_type=Path),
-    default=None,
-    help="Path to input Parquet file (overrides config.toml).",
-)
-def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
+def run_rendering(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
     """
-    Visualize AIS vessel tracks using Datashader and Dask.
+    Main entry point for rendering.
     """
     # Load Config
     with open(config_file, "rb") as f:
@@ -295,7 +260,6 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
 
     try:
         # Load Data
-        # Removed 'partitions' parameter as per the instruction's implied change
         coords_ddf = load_and_process_data(input_file) 
         
         # Render Tiles
@@ -307,12 +271,8 @@ def main(config_file: Path, output_dir: Path, scheduler: str, input_file: Path):
         logger.error(f"An error occurred: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1).close()
+        sys.exit(1)
     finally:
         stop_monitor.set()
         monitor_thread.join()
         client.close()
-
-
-if __name__ == "__main__":
-    main()

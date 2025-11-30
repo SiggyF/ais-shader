@@ -1,0 +1,2 @@
+[console_scripts]
+ais-visualization = ais_visualization.cli:cli
